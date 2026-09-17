@@ -99,7 +99,7 @@ Lists accept comma-separated numeric IDs. At least one user or role must be allo
 
 ### Step 3: Get a Gemini API key
 
-Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. The default model is `gemini-2.5-flash-lite` (`GEMINI_MODEL` overrides it). Free-tier content may improve Google's products, so avoid confidential material on that tier. [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. The default model is `gemini-3.5-flash-lite` (`GEMINI_MODEL` overrides it). Free-tier content may improve Google's products, so avoid confidential material on that tier. [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
 
 ### Step 4: Composio — the key and the services behind it
 
@@ -218,7 +218,7 @@ docker compose run --rm --no-deps bot python -m bot.main --check
 **Success** prints one line and exits `0`:
 
 ```text
-… scheduler config_ok guild=123456789 timezone=America/Los_Angeles model=gemini-2.5-flash-lite mention_channels=0 context_limit=50
+… scheduler config_ok guild=123456789 timezone=America/Los_Angeles model=gemini-3.5-flash-lite mention_channels=0 context_limit=50
 ```
 
 **Any problem** exits `2` and names what to fix:
