@@ -189,3 +189,5 @@ For Compose, migration, dashboard or frontend changes, run `git pull --ff-only`,
 7. From the second LAN machine, sign in with a local admin (when enabled), verify an incorrect password is rejected, sign out, and confirm protected pages require login. If OAuth is enabled, also check Google/Discord sign-in. On the dashboard, the audit log shows the tool calls above as `ok`, with no arguments or results stored.
 8. Restart the bot; `bot_ready` appears and an old preview's buttons no longer work.
 9. If updates are enabled, push a harmless change and verify publication plus the Pi update.
+
+If hidden password confirmation repeatedly fails, run the local-admin command with `--no-confirm` to enter it once. Input remains hidden and length-checked. Use an interactive terminal without `-T`; the default confirmation flow allows three attempts and never saves mismatched input.

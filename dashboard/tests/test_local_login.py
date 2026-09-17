@@ -112,3 +112,33 @@ def test_local_login_session_logout_and_reset(monkeypatch):
         finally:
             await engine.dispose()
     asyncio.run(run())
+
+
+def test_password_prompt_retries_without_changing_password(capsys):
+    password = '  a-long-password  '
+    with patch.object(local_admin, 'getpass', side_effect=[
+        'first-long-password', 'different-password', password, password,
+    ]) as prompt:
+        assert local_admin.prompt_password() == password
+        assert prompt.call_count == 4
+    output = capsys.readouterr().err
+    assert 'Nothing was saved' in output
+    assert password not in output
+
+
+def test_password_prompt_no_confirm():
+    with patch.object(local_admin, 'getpass', return_value='a-long-password') as prompt:
+        assert local_admin.prompt_password(confirm=False) == 'a-long-password'
+        prompt.assert_called_once()
+
+
+def test_password_prompt_no_confirm_still_checks_length():
+    with patch.object(local_admin, 'getpass', side_effect=['short', 'a-long-password']) as prompt:
+        assert local_admin.prompt_password(confirm=False) == 'a-long-password'
+        assert prompt.call_count == 2
+
+
+def test_password_prompt_stops_after_three_mismatches():
+    with patch.object(local_admin, 'getpass', side_effect=['a-long-password', 'different-password'] * 3):
+        with pytest.raises(ValueError, match='nothing was saved'):
+            local_admin.prompt_password()

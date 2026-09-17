@@ -3,12 +3,30 @@ import argparse
 import asyncio
 from getpass import getpass
 import re
+import sys
 
 from sqlalchemy import delete, select
 
 from .database import SessionLocal, engine
 from .models import Session, User
 from .passwords import hash_password
+
+
+def prompt_password(*, confirm: bool = True) -> str:
+    """Keep input hidden; never trim or otherwise change the chosen password."""
+    for _ in range(3):
+        password = getpass("Password (12-256 characters; input hidden): ")
+        if not 12 <= len(password) <= 256:
+            print("Password must contain 12 to 256 characters. Try again.", file=sys.stderr)
+            continue
+        if not confirm or password == getpass("Confirm password (input hidden): "):
+            return password
+        print(
+            "Passwords do not match. Nothing was saved. Enter both again, waiting for each prompt.\n"
+            "If confirmation keeps failing, rerun with --no-confirm to enter the password once.",
+            file=sys.stderr,
+        )
+    raise ValueError("Password entry failed after three attempts; nothing was saved")
 
 
 async def save_admin(username: str, password_hash: str, email: str | None = None):
@@ -37,13 +55,17 @@ def main():
     parser = argparse.ArgumentParser(description="Create/reset a local admin; passwords are prompted securely")
     parser.add_argument("username")
     parser.add_argument("--email", help="Attach credentials to an existing Google user")
+    parser.add_argument("--no-confirm", action="store_true", help="Enter a hidden password once without confirmation")
     args = parser.parse_args()
     username = args.username.strip().lower()
     if not re.fullmatch(r"[a-z0-9_.-]{3,64}", username):
         parser.error("Username must be 3-64 letters, digits, dots, underscores or hyphens")
-    password = getpass("Password (12-256 characters): ")
-    if password != getpass("Confirm password: "):
-        parser.error("Passwords do not match")
+    try:
+        password = prompt_password(confirm=not args.no_confirm)
+    except (EOFError, KeyboardInterrupt):
+        parser.error("Password entry cancelled; use an interactive terminal (docker compose exec without -T)")
+    except ValueError as error:
+        parser.error(str(error))
 
     async def run():
         try:

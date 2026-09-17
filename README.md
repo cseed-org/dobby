@@ -157,6 +157,14 @@ Choose `AUTH_MODE=oauth` (default), `local` (username/password on your LAN), or 
 
    Enter a password of 12-256 characters twice at the hidden prompts. Re-running this command resets the password and revokes that user's existing sessions. To attach local credentials to an existing Google account, append `--email you@gmail.com`; otherwise this creates a separate local admin.
 
+   If confirmation repeatedly reports a mismatch, wait for each prompt before typing or pasting. No characters or asterisks appear while typing. To enter the password once instead, use:
+
+   ```sh
+   docker compose exec dashboard python -m dashboard.local_admin leona --no-confirm
+   ```
+
+   This still hides the password and enforces its length. Use an interactive terminal, without `-T`; do not put the password in the command. The default confirmation flow now retries up to three times before exiting without saving.
+
 4. On either computer, open `http://192.168.1.50:3000/login` and enter your username/password. If blocked by the host firewall, allow inbound TCP ports 3000 and 8000 from your local subnet on the private network profile.
 
 Set `AUTH_MODE=both` and recreate the dashboard with `docker compose up -d --force-recreate dashboard` to retain local login while enabling OAuth; configure the OAuth credentials and redirect URIs as described below. `AUTH_MODE=oauth` disables local login and existing local sessions. Switching to `local` disables OAuth and existing OAuth sessions.
@@ -362,6 +370,7 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 | Symptom | Check |
 | --- | --- |
 | Cannot connect to Docker | Start Docker Desktop/Engine; use Linux containers |
+| Bot repeats `startup_failed type=RuntimeError` | Run `docker compose run --rm --no-deps bot python -m bot.main --check`. If configuration passes, rebuild the updated bot (`docker compose build bot`), recreate it, and inspect `docker compose logs --tail=100 bot` for `stage` and `startup_frame` diagnostics. These omit exception messages and credential values. A healthy dashboard does not imply the bot started. |
 | Migration fails with `No module named psycopg2` | Update the checkout to include the async migration fix, then run `docker compose build migrate`, `docker compose run --rm migrate`, and `docker compose up -d dashboard frontend`. The migration uses the installed `asyncpg` driver; no database reset is needed. |
 | `migrate` fails / bot cannot reach the database | `docker compose logs postgres migrate`; `POSTGRES_PASSWORD` must be set before the first start (changing it later requires `docker compose down -v`) |
 | Repeated `startup_failed` in the bot | `docker compose down`, then step 6's `--check` |
