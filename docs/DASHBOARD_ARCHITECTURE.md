@@ -92,7 +92,7 @@ Supported providers are `google_calendar`, `notion`, `instagram` and `linkedin` 
 - **Migrations:** the dashboard does not create or change the schema. The schema comes from Alembic in the repo-root `migrations/` (`versions/001_initial.py`, then `002_merge_contacts_service_integrations.py`, which folds `contacts` into `users.calendar_email`, drops `conversation_history` and `user_facts`, and makes `integrations` per provider).
   - `003_local_login.py` adds nullable local username/password hash columns and the username uniqueness constraint; apply it before starting the updated dashboard, even in OAuth-only mode.
   - Alembic runs in the compose `migrate` service, which is built from the root `Dockerfile` `migrate` target.
-  - `env.py` removes `+asyncpg` from `DATABASE_URL` and sets `target_metadata=None`, so there is no autogenerate from these models.
+  - `env.py` uses SQLAlchemy's async engine and `connection.run_sync()` with the installed `asyncpg` driver. It preserves `postgresql+asyncpg://` URLs and normalizes plain `postgresql://` URLs to that driver; URL objects avoid INI interpolation of percent-encoded passwords. It sets `target_metadata=None`, so there is no autogenerate from these models.
 - The migration is stricter than `models.py`. For example, it makes `display_name` and `sessions.provider` `NOT NULL`, while the ORM declares them nullable. Bot configuration is environment-only; there is no settings table.
 
 ## Configuration (environment variables)

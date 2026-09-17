@@ -362,6 +362,7 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 | Symptom | Check |
 | --- | --- |
 | Cannot connect to Docker | Start Docker Desktop/Engine; use Linux containers |
+| Migration fails with `No module named psycopg2` | Update the checkout to include the async migration fix, then run `docker compose build migrate`, `docker compose run --rm migrate`, and `docker compose up -d dashboard frontend`. The migration uses the installed `asyncpg` driver; no database reset is needed. |
 | `migrate` fails / bot cannot reach the database | `docker compose logs postgres migrate`; `POSTGRES_PASSWORD` must be set before the first start (changing it later requires `docker compose down -v`) |
 | Repeated `startup_failed` in the bot | `docker compose down`, then step 6's `--check` |
 | Bot starts but commands missing | Confirm `DISCORD_GUILD_ID`; commands sync to that one server on `bot_ready` |

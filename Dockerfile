@@ -13,6 +13,7 @@ CMD ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
 
 # Test image: adds the suite and its config. Never the deployed stage.
 FROM base AS test
+COPY migrations/ ./migrations/
 COPY pyproject.toml ./
 COPY scripts ./scripts
 COPY tests ./tests

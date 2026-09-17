@@ -94,6 +94,18 @@ Exit `0` prints `config_ok`; exit `2` names the setting to fix. `docker compose 
 
 If `.env` is missing when you run `docker compose`, Docker may create a **directory** named `.env`; delete it and recreate the file (`python scripts/bootstrap.py` does this).
 
+## Recover from the missing psycopg2 migration error
+
+Older `migrations/env.py` removed `+asyncpg` from the database URL, causing SQLAlchemy to request the uninstalled `psycopg2` driver. The updated migration environment uses the installed `asyncpg` driver through Alembic's async-engine support. After updating the checkout, rebuild the migration image and retry:
+
+```sh
+docker compose build migrate
+docker compose run --rm migrate
+docker compose up -d dashboard frontend
+```
+
+This retry preserves the Postgres volume. A missing-driver error occurs before connecting to the database; there is no need to delete the volume or install packages interactively inside a container. The separate orphan-container warning does not cause this migration failure. Review the named old service before removing it, especially if it is an older running bot.
+
 ## Run on either machine
 
 ```text
