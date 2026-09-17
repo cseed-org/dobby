@@ -21,7 +21,14 @@ class Config:
     model: str
     timezone: str
     mention_channels: frozenset[int] = frozenset()
-    context_limit: int = 12
+    # The one Composio entity that owns Dobby's service accounts; shared with the dashboard.
+    composio_entity: str = "dobby"
+    # How many recent human messages Dobby reads from the channel before each request.
+    context_limit: int = 50
+    # Instagram Business/Creator account ID the connected Meta app manages (needed to publish).
+    instagram_user_id: str = ""
+    # Optional Notion page under which /notion note creates pages.
+    notion_parent_page_id: str = ""
 
     @classmethod
     def load(cls):
@@ -47,6 +54,12 @@ class Config:
             ZoneInfo(zone)
         except Exception:
             raise ConfigError(f"TEAM_TIMEZONE is not a known IANA zone: {zone}") from None
+        try:
+            context_limit = int(os.getenv("CONTEXT_MESSAGE_LIMIT", "50"))
+        except ValueError:
+            context_limit = -1
+        if not 0 <= context_limit <= 500:
+            raise ConfigError("CONTEXT_MESSAGE_LIMIT must be a whole number from 0 to 500.")
         return cls(
             os.environ["DISCORD_TOKEN"],
             guild,
@@ -58,7 +71,10 @@ class Config:
             os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
             zone,
             mentions,
-            12,
+            os.getenv("COMPOSIO_ENTITY_ID", "dobby").strip() or "dobby",
+            context_limit,
+            os.getenv("INSTAGRAM_USER_ID", "").strip(),
+            os.getenv("NOTION_PARENT_PAGE_ID", "").strip(),
         )
 
     def mentionable(self, channel):

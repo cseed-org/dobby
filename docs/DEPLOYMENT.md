@@ -1,20 +1,20 @@
-﻿# Docker deployment: Raspberry Pi and Windows
+# Docker deployment: Raspberry Pi and Windows
 
-Dobby runs on Windows Docker Desktop (`linux/amd64`) and 64-bit Raspberry Pi OS (`linux/arm64`). Use [README.md](../README.md#set-up-dobby) for initial Discord/Gemini/Google setup. This deployment needs no paid cloud server or Secret Manager.
+Dobby runs on Windows Docker Desktop (`linux/amd64`) and 64-bit Raspberry Pi OS (`linux/arm64`). Use [README.md](../README.md#set-up-dobby) for the Discord, Gemini, Composio and dashboard-login setup; this page covers the machine itself. No paid cloud server is needed.
 
 ## Prepare the Pi
 
-Install 64-bit Raspberry Pi OS and Docker Engine with Compose using [Docker's Debian instructions](https://docs.docker.com/engine/install/debian/). Pi 4/5 with at least 2 GB RAM is recommended. Confirm:
+Install 64-bit Raspberry Pi OS and Docker Engine with Compose using [Docker's Debian instructions](https://docs.docker.com/engine/install/debian/). A Pi 4/5 with 4 GB RAM is recommended: Postgres, the API and the Next.js frontend run beside the bot. Confirm:
 
 ```bash
-uname -m
+uname -m                      # aarch64
 docker compose version
 sudo systemctl enable --now docker
 ```
 
-Architecture should be `aarch64`. Docker commands assume your trusted user can access Docker, or you run them through `sudo`. Docker group membership is effectively root access.
+Docker group membership is effectively root access; give it only to a trusted user or run through `sudo`.
 
-For the optional timer, keep the checkout at `/opt/dobby`:
+For the optional update timer, keep the checkout at `/opt/dobby`:
 
 ```bash
 sudo mkdir -p /opt/dobby
@@ -22,80 +22,71 @@ sudo chown "$(id -u):$(id -g)" /opt/dobby
 git clone https://github.com/YOUR_OWNER/YOUR_REPO.git /opt/dobby
 cd /opt/dobby
 cp .env.example .env
-mkdir -p secrets data
-chmod 700 secrets data
 chmod 600 .env
-id -u
-id -g
+id -u; id -g
 ```
 
-Set `DOBBY_UID`/`DOBBY_GID` in `.env` to those IDs, along with the API settings from the README. Compose file secrets preserve host permissions; do not make credentials world-readable to work around a UID mismatch.
+Set `DOBBY_UID`/`DOBBY_GID` in `.env` to those IDs, then fill in the rest per the README.
 
 ## Move from Windows to the Pi
 
-Complete Google authorization on Windows with the Docker helper. Transfer configuration and token over SSH/SCP, not Git. In PowerShell, replacing the destination:
+Only `.env` needs to move — the service connections live in Composio, not in local files. Transfer it over SSH/SCP, never Git:
 
 ```powershell
 scp .env piuser@raspberrypi.local:/opt/dobby/.env
-scp secrets/google-token.json piuser@raspberrypi.local:/opt/dobby/secrets/google-token.json
 ```
 
-Create the destination directories first. Edit the transferred Pi `.env` to match the Pi UID/GID instead of Windows defaults. On Pi:
+On the Pi, edit the transferred `.env`: set the Pi UID/GID, and change `DASHBOARD_URL` / `API_URL` to how browsers will reach the Pi (for example `http://raspberrypi.local:3000` and `http://raspberrypi.local:8000`). Add those hosts to the OAuth redirect URIs in Google Cloud and the Discord application. Then:
 
 ```bash
 cd /opt/dobby
-chmod 600 .env secrets/google-token.json
 docker compose up -d --build
-docker compose logs --tail 50 -f dobby
+docker compose logs --tail 50 -f bot dashboard
 ```
 
-**Stop Windows Dobby first** with `docker compose down`. The runtime does not need `google-client.json`; retain it privately on the computer used for relinking. Both runtime files should be owned by the configured UID/GID.
-
-A Pi with a browser can run the authorization helper itself. On a headless Pi, the Windows-and-transfer method is simpler. The helper callback only accepts host-local connections; do not open its port to the network.
+**Stop Windows Dobby first** (`docker compose down`): one bot instance per Discord token. The Postgres data does not move automatically; either re-add users on the Pi's dashboard or restore a `pg_dump` from Windows (`docker compose exec -T postgres psql -U dobby dobby < backup.sql` after the first start).
 
 ## Test locally in Docker
 
-Before deploying to either machine, confirm the image is sound. These run with networking disabled and need no credentials:
+Before deploying, confirm the image is sound. These run with networking disabled and need no credentials:
 
 ```text
 docker compose -f compose.test.yaml run --rm tests
 docker compose -f compose.test.yaml run --rm lint
 ```
 
-`compose.test.yaml` builds the Dockerfile's `test` stage, which adds the suite on top of the same base layers the runtime uses. The deployed stage is last in the Dockerfile, so a plain `docker build .` and `docker compose up` still select the runtime image, which contains no tests.
+`compose.test.yaml` builds the Dockerfile's `test` stage on the same base layers the runtime uses. The deployed `runtime` stage is last in the Dockerfile, so a plain `docker build .` selects an image with no tests.
 
-Once `.env` and `secrets/google-token.json` exist, validate them without contacting Discord:
+Once `.env` exists, validate the bot's settings without contacting Discord:
 
 ```text
-docker compose run --rm --no-deps dobby python -m bot.main --check
+docker compose run --rm --no-deps bot python -m bot.main --check
 ```
 
-Exit `0` prints `config_ok`; exit `2` names the setting to fix. Do this before the first `up` on a new machine, because `restart: unless-stopped` otherwise retries a misconfigured container indefinitely.
+Exit `0` prints `config_ok`; exit `2` names the setting to fix. `docker compose config --quiet` additionally checks that the dashboard's required variables are set. Do both before the first `up` on a new machine, because `restart: unless-stopped` otherwise retries a misconfigured container indefinitely.
 
-Create `.env` and the `secrets` directory **before** the first `up`. Docker creates a directory when a Compose secret's source file is missing, and that directory then mounts over the runtime credential path. The preflight names this case directly. `python scripts/bootstrap.py` creates both correctly and prints the UID/GID to set on Pi.
+If `.env` is missing when you run `docker compose`, Docker may create a **directory** named `.env`; delete it and recreate the file (`python scripts/bootstrap.py` does this).
 
 ## Run on either machine
 
 ```text
 docker compose up -d --build
 docker compose ps
-docker compose logs --tail 50 -f dobby
+docker compose logs --tail 50 -f bot
 ```
 
-The runtime exposes no ports, runs non-root, drops capabilities, has a read-only filesystem and credentials, rotates logs, and caps memory at 512 MB. It restarts unless explicitly stopped. Windows Docker Desktop must remain running; on Pi Docker starts at boot.
+`migrate` runs Alembic and exits; `bot`, `dashboard` and `frontend` then start. The bot exposes no ports, runs non-root with all capabilities dropped, a read-only filesystem, rotated logs and a 512 MB memory cap. The dashboard publishes 8000 and the frontend 3000 on the host; put them behind a LAN firewall or reverse proxy if the Pi is reachable from elsewhere. Windows Docker Desktop must remain running; on the Pi, Docker starts at boot.
 
-`docker compose down` removes the container, not credentials. After changing credentials, recreate with `docker compose up -d --force-recreate --no-build` so replaced files are remounted. A restart alone may retain an old bind-mounted file.
+`docker compose down` removes containers, not the `pgdata` volume or `.env`. After changing `.env`, recreate with `docker compose up -d --force-recreate --no-build`; if `API_URL` changed, also `docker compose build frontend`.
 
 ## Publish images from GitHub
 
-`.github/workflows/publish.yml` runs on main pushes. It tests the source, validates Compose, then builds/publishes AMD64 and ARM64 images to:
+`.github/workflows/publish.yml` runs on main pushes. It tests the source, validates Compose, then builds and publishes AMD64 and ARM64 **bot** images to:
 
 - `ghcr.io/owner/repository:main`
 - `ghcr.io/owner/repository:sha-COMMIT_SHA`
 
-The workflow uses GitHub's built-in `GITHUB_TOKEN`; no cloud key or application secret is required. PR checks have no package-write permission. Protect main and workflow changes: a trusted image can read runtime credentials.
-
-After the first publish, open the package's GitHub settings and change its visibility to **Public**. A public repository does not necessarily make a new package public. Public pulls require no stored GitHub credential on the Pi. [Container Registry documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+The workflow uses GitHub's built-in `GITHUB_TOKEN`; no cloud key or application secret is required. After the first publish, change the package's visibility to **Public** so the Pi can pull without credentials. Protect `main` and workflow changes: a trusted image can read runtime credentials. The dashboard and frontend are built locally from the checkout.
 
 ## Pull a published image on Windows or Pi
 
@@ -108,11 +99,11 @@ DOBBY_IMAGE=ghcr.io/your_owner/your_repo:main
 Then run:
 
 ```text
-docker compose -f compose.yaml -f compose.registry.yaml pull dobby
-docker compose -f compose.yaml -f compose.registry.yaml up -d --no-build --pull never dobby
+docker compose -f compose.yaml -f compose.registry.yaml pull bot
+docker compose -f compose.yaml -f compose.registry.yaml up -d --no-build --pull never bot
 ```
 
-This reuses the same local secrets and service. `docker compose logs` and `docker compose down` still work because the project name is fixed. Use both files for starts/recreates in registry mode so you do not switch back to local builds. Docker selects the architecture automatically.
+The override only replaces the `bot` service's image; the other services are unchanged. Use both files for starts/recreates in registry mode so you do not switch back to local builds.
 
 ## Automatic updates on the Pi
 
@@ -129,13 +120,9 @@ systemctl list-timers dobby-update.timer
 sudo journalctl -u dobby-update.service -n 30 --no-pager
 ```
 
-Every five minutes plus a small randomized delay, the timer runs the trusted local script as root to access Docker. It pulls first: if that fails, the current container stays running. Compose recreates the service when the image/config changed. `flock` prevents concurrent updates. No automatic Git pull occurs; Compose and updater files change only through a deliberate checkout update.
+Every five minutes plus a small randomized delay, the timer runs `scripts/update-pi.sh` as root: it pulls first (a failed pull leaves the current container running), then recreates the `bot` service if its image changed. `flock` prevents overlapping runs. No automatic Git pull occurs, so Compose files, migrations, the dashboard and the frontend change only through a deliberate `git pull` and rebuild.
 
-No router ports, webhook endpoint, self-hosted GitHub runner, or container-mounted Docker socket are needed. Workflow completion plus the next timer check determines update time. Updates briefly reconnect Discord and invalidate pending previews.
-
-Only trusted administrators should be able to modify `/opt/dobby`, since the root timer reads its Compose files. Protect the GitHub main branch similarly. Docker restarts a crashed new image but does not automatically roll back to an old one.
-
-Old images are not pruned automatically. Periodically inspect `docker system df` and remove specific unused Dobby images if space is tight.
+Updates briefly reconnect Discord and discard any pending Confirm previews. Only trusted administrators should be able to modify `/opt/dobby`, since the root timer reads its Compose files. Old images are not pruned automatically; check `docker system df` occasionally.
 
 To stop updates:
 
@@ -148,50 +135,18 @@ Disable the timer **before** stopping Dobby for maintenance; otherwise the next 
 
 ## Rollback and configuration updates
 
-Disable the timer, set `DOBBY_IMAGE` to a known-good `:sha-COMMIT_SHA` tag, then run the published-image pull/up commands. This rolls back code, not Calendar operations. A fixed SHA tag prevents newer main pushes from changing the selected version.
+Disable the timer, set `DOBBY_IMAGE` to a known-good `:sha-COMMIT_SHA` tag, then run the published-image pull/up commands. This rolls back bot code, not anything already published to a calendar or social account.
 
-Review and run `git pull --ff-only` manually for Compose/updater changes. Reinstall changed systemd units and run `sudo systemctl daemon-reload`. Ignored `.env` and secrets are preserved; do not copy the example over your existing `.env` during updates.
+For Compose, migration, dashboard or frontend changes, run `git pull --ff-only`, then `docker compose up -d --build` (which re-runs `migrate`). Reinstall changed systemd units and `sudo systemctl daemon-reload`. Never copy `.env.example` over your existing `.env`.
 
 ## Live smoke test
 
-### Verify a local-image update
-
-The September 10 diagnostic showed `dobby:local` still sending the legacy
-`response_schema`, despite the source fix. Restarting a container does not rebuild
-the Python files copied into its image. From the Pi checkout, after the fixes have
-been committed and pushed:
-
-```bash
-git pull --ff-only
-docker compose up -d --build --force-recreate dobby
-docker compose logs --tail 50 dobby
-docker compose exec dobby python -c "import inspect; from bot.planner import Planner; print(inspect.getsource(Planner))"
-```
-
-Confirm the startup log contains `structured_output=response_json_schema
-planner_attempts=3` and the running planner uses
-`response_json_schema=Plan.model_json_schema()`. For registry deployments, use the
-published-image pull/up procedure above instead of building `dobby:local`.
-
-The old diagnostic's explicit `response_schema=Plan` negative test will still fail
-with HTTP 400; it is not the production path. A 503 from the JSON Schema path is
-Gemini overload, not schema rejection. Planning now makes up to three attempts
-with exponential backoff and jitter for transient failures, then returns an
-actionable error in the requesting channel. Persistent overload can still prevent scheduling.
-Calendar writes are not retried by this policy. Discord voice-library warnings
-are unrelated to this text-only bot.
-
-### Exercise Discord and Calendar
-
-1. Without an allowed role/user grant, try `/events` and a mention; no calendar data or writes should result.
-2. As an allowed user, preview a future meeting, check the one-hour default, cancel, and verify no event exists.
-3. Create and confirm; check `/events` and Google Calendar for one event.
-4. Test a 30-minute override and recent-message context.
-5. Rename/reschedule by ID. Prepare an edit, change the event directly in Google Calendar, then confirm the old preview; it should fail as stale.
-6. Remove the scheduler role before confirming a channel preview; access should be denied.
-7. Restart Docker Dobby; verify `bot_ready` and that old previews cannot write.
-8. If updates are enabled, push a harmless documentation change and verify publication plus the Pi update.
-
-## Migrating away from Google Cloud
-
-The Cloud Run workflow is removed, so new pushes no longer deploy there. This does not remove old workers, images, secrets, or IAM grants. If you created any, stop/remove the cloud worker before starting the Pi with the same token and clean up unused resources. Existing cloud resources may still accrue charges until stopped/deleted.
+1. Without an allowed role/user grant, try `/events` and a mention; nothing should happen beyond a refusal.
+2. As an allowed user, `/help` lists Google Calendar, Notion, Instagram and LinkedIn.
+3. `/events` returns the connected calendar's events; `@Dobby schedule a test sync tomorrow at 10am and invite <a registered teammate>` creates it with that person's calendar email.
+4. `/notion search query:<a known page>` finds it.
+5. `/linkedin post text:test` shows a preview; have someone else click Confirm (refused), then Cancel it yourself. Confirm one real post only when you mean it.
+6. `/instagram posts` lists our posts; `/instagram story post:1` previews the story; Cancel.
+7. On the dashboard, the audit log shows the tool calls above as `ok`, with no arguments or results stored.
+8. Restart the bot; `bot_ready` appears and an old preview's buttons no longer work.
+9. If updates are enabled, push a harmless change and verify publication plus the Pi update.

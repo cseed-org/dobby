@@ -12,14 +12,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'  # matches the Docker image; composio-core's pillow pin has no 3.14 wheels
       - run: pip install -r requirements.txt
       - run: python scripts/check_secrets.py
       - run: ruff check bot scripts tests
       - run: ruff format --check bot scripts tests
       - run: python -m pytest -q
+      # compose.yaml marks credentials as required (:?); placeholders let the file validate.
       - run: docker compose --env-file .env.example config --quiet
-      - run: docker compose --env-file .env.example -f compose.auth.yaml config --quiet
+        env:
+          DISCORD_TOKEN: placeholder
+          DISCORD_GUILD_ID: "1"
+          GEMINI_API_KEY: placeholder
+          COMPOSIO_API_KEY: placeholder
+          POSTGRES_PASSWORD: placeholder
+          SECRET_KEY: placeholder
+          GOOGLE_CLIENT_ID: placeholder
+          GOOGLE_CLIENT_SECRET: placeholder
+          DISCORD_CLIENT_ID: placeholder
+          DISCORD_CLIENT_SECRET: placeholder
+          BOOTSTRAP_ADMIN_EMAIL: admin@uw.edu
       - run: docker compose -f compose.test.yaml config --quiet
       - run: docker build -t calendar-bot:test .
       - run: docker run --rm --entrypoint python calendar-bot:test -c "import bot.main; import google.genai"

@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Calendar, Github, BookOpen } from 'lucide-react'
+import { Calendar, BookOpen, Instagram, Linkedin } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,20 +20,27 @@ const PROVIDERS: ProviderConfig[] = [
   {
     key: 'google_calendar',
     label: 'Google Calendar',
-    description: 'Let Dobby access your calendar to schedule events and check availability.',
+    description: "The team calendar Dobby creates events on. Invitees don't need to connect anything.",
     icon: <Calendar className="h-6 w-6 text-blue-400" />,
-  },
-  {
-    key: 'github',
-    label: 'GitHub',
-    description: 'Connect GitHub to manage repos, issues, and pull requests via Dobby.',
-    icon: <Github className="h-6 w-6 text-zinc-200" />,
   },
   {
     key: 'notion',
     label: 'Notion',
-    description: 'Give Dobby access to read and write Notion pages and databases.',
+    description: 'The workspace account Dobby reads and writes Notion pages with.',
     icon: <BookOpen className="h-6 w-6 text-zinc-100" />,
+  },
+  {
+    key: 'instagram',
+    label: 'Instagram',
+    description:
+      "The group's Business/Creator account Dobby posts and stories to. Every post is confirmed in Discord first.",
+    icon: <Instagram className="h-6 w-6 text-pink-400" />,
+  },
+  {
+    key: 'linkedin',
+    label: 'LinkedIn',
+    description: "The account Dobby publishes LinkedIn posts from, after a Confirm in Discord.",
+    icon: <Linkedin className="h-6 w-6 text-sky-400" />,
   },
 ]
 
@@ -99,9 +106,13 @@ function IntegrationCard({
 export default function IntegrationsPage() {
   const queryClient = useQueryClient()
 
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me })
+  const isAdmin = me?.role === 'admin'
+
   const { data: integrations, isLoading } = useQuery({
     queryKey: ['integrations'],
     queryFn: api.integrations.list,
+    enabled: isAdmin,
   })
 
   const disconnectMutation = useMutation({
@@ -116,13 +127,20 @@ export default function IntegrationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-100">Integrations</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">Dobby&apos;s service accounts</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Connect external services to give Dobby access on your behalf.
+          Connect the accounts Dobby acts through. One shared connection per service — nobody
+          links a personal account. Admins only.
         </p>
       </div>
 
-      {isLoading ? (
+      {me && !isAdmin ? (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-zinc-400">
+            Only admins can manage Dobby&apos;s service accounts.
+          </CardContent>
+        </Card>
+      ) : isLoading || !me ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-48" />

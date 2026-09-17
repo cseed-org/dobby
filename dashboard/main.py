@@ -2,14 +2,15 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import get_current_user
-from .database import engine
+from .database import engine, get_db
 from .routers import auth, admin, integrations
-from .schemas import UserOut
+from .schemas import MeUpdate, UserOut
 from .seed import seed_bootstrap_admin
 
 logging.basicConfig(level=logging.INFO)
@@ -52,4 +53,25 @@ async def health():
 
 @app.get("/me", response_model=UserOut, tags=["meta"])
 async def me(current_user=Depends(get_current_user)):
+    return UserOut.model_validate(current_user)
+
+
+@app.patch("/me", response_model=UserOut, tags=["meta"])
+async def update_me(
+    body: MeUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Let a user set (or clear) the address Dobby invites them with."""
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nothing to update")
+    try:
+        async with db.begin():
+            for field, value in update_data.items():
+                setattr(current_user, field, value)
+            db.add(current_user)
+    except Exception:
+        logger.exception("Failed to update profile for user %s", current_user.id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
     return UserOut.model_validate(current_user)
