@@ -25,6 +25,8 @@ class User(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     uw_email: Mapped[Optional[str]] = mapped_column(Text, unique=True, nullable=True)
+    local_username: Mapped[Optional[str]] = mapped_column(Text, unique=True, nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     discord_id: Mapped[Optional[str]] = mapped_column(Text, unique=True, nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Address Dobby invites when someone asks to include this person in a meeting.

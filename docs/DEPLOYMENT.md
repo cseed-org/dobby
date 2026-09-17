@@ -30,13 +30,13 @@ Set `DOBBY_UID`/`DOBBY_GID` in `.env` to those IDs, then fill in the rest per th
 
 ## Move from Windows to the Pi
 
-Only `.env` needs to move — the service connections live in Composio, not in local files. Transfer it over SSH/SCP, never Git:
+Transfer `.env` for configuration. Service connections live in Composio, but users, local password hashes and sessions live in Postgres; preserve them with a database backup/restore, or create new local accounts on the Pi. Transfer configuration over SSH/SCP, never Git:
 
 ```powershell
 scp .env piuser@raspberrypi.local:/opt/dobby/.env
 ```
 
-On the Pi, edit the transferred `.env`: set the Pi UID/GID, and change `DASHBOARD_URL` / `API_URL` to how browsers will reach the Pi (for example `http://raspberrypi.local:3000` and `http://raspberrypi.local:8000`). Add those hosts to the OAuth redirect URIs in Google Cloud and the Discord application. Then:
+On the Pi, edit the transferred `.env`: set the Pi UID/GID, and change `DASHBOARD_URL` / `API_URL` to how browsers will reach the Pi (for example `http://raspberrypi.local:3000` and `http://raspberrypi.local:8000`). If `AUTH_MODE=oauth` or `both`, add the API host to the OAuth redirect URIs in Google Cloud and the Discord application. Local-only login does not need those OAuth applications. Then:
 
 ```bash
 cd /opt/dobby
@@ -44,7 +44,34 @@ docker compose up -d --build
 docker compose logs --tail 50 -f bot dashboard
 ```
 
-**Stop Windows Dobby first** (`docker compose down`): one bot instance per Discord token. The Postgres data does not move automatically; either re-add users on the Pi's dashboard or restore a `pg_dump` from Windows (`docker compose exec -T postgres psql -U dobby dobby < backup.sql` after the first start).
+**Stop Windows Dobby first** (`docker compose down`): one bot instance per Discord token. The Postgres data does not move automatically; either recreate the local admin with the CLI and re-add users, or restore a `pg_dump` from Windows (`docker compose exec -T postgres psql -U dobby dobby < backup.sql` after the first start).
+
+## Dashboard authentication and LAN access
+
+Choose `AUTH_MODE=oauth` (default), `local`, or `both` in `.env`. See the [README login walkthrough](../README.md#step-5-dashboard-login) for credentials and first-admin setup. Local mode needs no Google/Discord OAuth client credentials or bootstrap email; keep `SECRET_KEY` and the full stack's bot/database/integration settings configured.
+
+For access from another computer, use the server's LAN address in both URL settings, for example:
+
+```dotenv
+AUTH_MODE=local
+DASHBOARD_URL=http://192.168.1.50:3000
+API_URL=http://192.168.1.50:8000
+```
+
+Use the same hostname/IP from both computers. `API_URL` must also be reachable from the frontend container for its server-side session check. Rebuild after changing it. On upgrade, build the migration image and apply migration 003 before starting the new dashboard (required in every auth mode):
+
+```sh
+docker compose build migrate dashboard frontend
+docker compose run --rm migrate
+docker compose up -d dashboard frontend
+docker compose exec dashboard python -m dashboard.local_admin leona
+```
+
+The last command creates/promotes a local admin and prompts for a 12-256 character password twice. Repeat it to reset the password and revoke that user's existing sessions. Append `--email you@gmail.com` to attach credentials to an existing Google user instead of creating a separate account. Then visit `http://192.168.1.50:3000/login` from either machine.
+
+Allow inbound TCP 3000/8000 only from your local subnet on the host's private network profile. Local authentication checks private/loopback source IPs, but Docker/proxies may mask clients, so this check does not replace the firewall. Plain HTTP does not encrypt credentials or cookies; use it only on a trusted LAN or configure HTTPS. `ENV=production` enables Secure cookies and requires HTTPS; the supplied Compose file does not pass `ENV`, so add it explicitly when configuring TLS.
+
+Changing only `AUTH_MODE` needs `docker compose up -d --force-recreate dashboard`. `both` retains local login and adds OAuth; `oauth` disables local sessions; `local` disables OAuth sessions. OAuth login is separate from Composio's service authorization, which is still needed for integrations in any dashboard mode.
 
 ## Test locally in Docker
 
@@ -75,7 +102,7 @@ docker compose ps
 docker compose logs --tail 50 -f bot
 ```
 
-`migrate` runs Alembic and exits; `bot`, `dashboard` and `frontend` then start. The bot exposes no ports, runs non-root with all capabilities dropped, a read-only filesystem, rotated logs and a 512 MB memory cap. The dashboard publishes 8000 and the frontend 3000 on the host; put them behind a LAN firewall or reverse proxy if the Pi is reachable from elsewhere. Windows Docker Desktop must remain running; on the Pi, Docker starts at boot.
+`migrate` runs Alembic and exits; `bot`, `dashboard` and `frontend` then start. The bot exposes no ports, runs non-root with all capabilities dropped, a read-only filesystem, rotated logs and a 512 MB memory cap. The dashboard publishes 8000 and the frontend 3000 on the host; restrict them to your local subnet with the host firewall for local login. Do not expose local login through public port forwarding, tunnels or reverse proxies; they can hide the original client address. Windows Docker Desktop must remain running; on the Pi, Docker starts at boot.
 
 `docker compose down` removes containers, not the `pgdata` volume or `.env`. After changing `.env`, recreate with `docker compose up -d --force-recreate --no-build`; if `API_URL` changed, also `docker compose build frontend`.
 
@@ -147,6 +174,6 @@ For Compose, migration, dashboard or frontend changes, run `git pull --ff-only`,
 4. `/notion search query:<a known page>` finds it.
 5. `/linkedin post text:test` shows a preview; have someone else click Confirm (refused), then Cancel it yourself. Confirm one real post only when you mean it.
 6. `/instagram posts` lists our posts; `/instagram story post:1` previews the story; Cancel.
-7. On the dashboard, the audit log shows the tool calls above as `ok`, with no arguments or results stored.
+7. From the second LAN machine, sign in with a local admin (when enabled), verify an incorrect password is rejected, sign out, and confirm protected pages require login. If OAuth is enabled, also check Google/Discord sign-in. On the dashboard, the audit log shows the tool calls above as `ok`, with no arguments or results stored.
 8. Restart the bot; `bot_ready` appears and an old preview's buttons no longer work.
 9. If updates are enabled, push a harmless change and verify publication plus the Pi update.

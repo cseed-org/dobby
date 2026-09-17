@@ -8,7 +8,7 @@ tool-call metadata is recorded (to `agent_actions`). Anything published to the o
 (Instagram, LinkedIn) is previewed in Discord and waits for the requester to press **Confirm**.
 
 The dashboard (`dashboard/`) and frontend (`frontend/`) are documented separately. The bot talks
-to them only through the shared Postgres database and the shared Composio entity.
+to them only through the shared Postgres database and the shared Composio entity. Dashboard `AUTH_MODE` (`oauth`, `local`, `both`) does not change Discord bot allowlists or Composio service authorization. Local usernames/password hashes belong to the dashboard; the bot does not authenticate with them. A local admin needs a registered Discord ID to use bot features that look up the user roster. See [dashboard login setup](../README.md#step-5-dashboard-login).
 
 ## Layout
 

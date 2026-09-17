@@ -8,6 +8,7 @@ data/
 *.pem
 *.key
 .venv/
+.venv-dashboard/
 __pycache__/
 .pytest_cache/
 *.log

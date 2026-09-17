@@ -84,7 +84,7 @@ function AddUserDialog({ onSuccess }: { onSuccess: () => void }) {
         <DialogHeader>
           <DialogTitle>Add user to allowlist</DialogTitle>
           <DialogDescription>
-            Add a pre-registered UW student or admin to the bot roster.
+            Add a pre-registered student or admin to the bot roster.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
@@ -98,13 +98,13 @@ function AddUserDialog({ onSuccess }: { onSuccess: () => void }) {
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="uw_email">UW email</Label>
+            <Label htmlFor="uw_email">Google email</Label>
             <Input
               id="uw_email"
               type="email"
               value={form.uw_email}
               onChange={(e) => setForm((f) => ({ ...f, uw_email: e.target.value }))}
-              placeholder="jane@uw.edu"
+              placeholder="jane@gmail.com"
             />
           </div>
           <div className="grid gap-2">
@@ -233,7 +233,7 @@ function EditUserDialog({ user, onSuccess }: { user: User; onSuccess: () => void
               type="email"
               value={form.calendar_email}
               onChange={(e) => setForm((f) => ({ ...f, calendar_email: e.target.value }))}
-              placeholder="jane@uw.edu"
+              placeholder="jane@gmail.com"
             />
           </div>
         </div>
@@ -366,7 +366,7 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>UW Email</TableHead>
+                  <TableHead>Google email</TableHead>
                   <TableHead>Calendar email</TableHead>
                   <TableHead>Discord ID</TableHead>
                   <TableHead>Role</TableHead>

@@ -12,6 +12,8 @@ from .database import engine, get_db
 from .routers import auth, admin, integrations
 from .schemas import MeUpdate, UserOut
 from .seed import seed_bootstrap_admin
+from .login_config import auth_mode, is_local_request
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,12 +21,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await seed_bootstrap_admin()
+    if auth_mode() != "local":
+        await seed_bootstrap_admin()
     yield
     await engine.dispose()
 
 
 app = FastAPI(title="Dobby Dashboard", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def local_network_only(request, call_next):
+    if auth_mode() == "local" and not is_local_request(request):
+        return JSONResponse({"detail": "Local network access only"}, status_code=403)
+    return await call_next(request)
 
 # Session middleware is required by authlib's starlette OAuth client
 app.add_middleware(

@@ -23,6 +23,10 @@ export interface UserEdit {
 }
 
 export const api = {
+  loginMethods: () => request<{ local: boolean; oauth: boolean }>('/auth/methods'),
+  localLogin: (username: string, password: string) => request<{ ok: boolean }>('/auth/local', {
+    method: 'POST', body: JSON.stringify({ username, password }),
+  }),
   me: () => request<User>('/me'),
   updateMe: (data: { calendar_email: string | null }) =>
     request<User>('/me', { method: 'PATCH', body: JSON.stringify(data) }),

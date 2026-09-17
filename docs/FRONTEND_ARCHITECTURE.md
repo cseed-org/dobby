@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-The frontend is the web dashboard for Dobby (a "UW Student Portal"). Pre-registered users sign in and keep
+The frontend is the web dashboard for Dobby (a "UW Student Portal"). Pre-registered OAuth users and administrator-created local accounts sign in and keep
 their calendar email current. Admins also manage the user allowlist (including everyone's calendar
 email), guild settings, the audit log and Dobby's own service-account connections. It holds no data of its own. Everything it shows comes from the dashboard API
 (`dashboard/`).
@@ -49,7 +49,7 @@ The `@/*` import alias maps to `./src/*`.
 | URL                          | Rendering | Shows                                                                                   | Access |
 | ---------------------------- | --------- | --------------------------------------------------------------------------------------- | ------ |
 | `/`                          | Server    | Nothing. Goes to `/dashboard` if a `dobby_session` cookie exists, otherwise to `/login`. | Anyone |
-| `/login`                     | Server    | "Sign in with Google (UW)" and "Sign in with Discord" buttons. Both link to the API.    | Anyone |
+| `/login` | Client | Fetches `/auth/methods`; displays Google/Discord buttons, a local username/password form, or both | Anyone who can reach the configured API |
 | `/dashboard`                 | Client    | Welcome line and a **Calendar email** card: edit your own address (`PATCH /me`)         | Signed in |
 | `/dashboard/integrations`    | Client    | Dobby's service accounts: Google Calendar, Notion, Instagram, LinkedIn cards with Connect/Disconnect. Non-admins see an "admins only" notice | Admin |
 | `/dashboard/admin/users`     | Client    | Allowlist table with calendar emails: add user (dialog), edit name/Discord ID/calendar email (dialog), promote/demote, remove | Admin* |
@@ -80,19 +80,26 @@ but the `admin/*` pages don't check the role themselves. The API enforces it.
 - **Client:** `request<T>()` in `lib/api.ts` wraps `fetch` with `credentials: 'include'` and a JSON
   `Content-Type`. On a non-OK response it throws `Error(detail)`, falling back to `Request failed: <status>`.
 - **Endpoints used:**
-  - `GET /me`, `PATCH /me`, `POST /auth/logout`
+  - `GET /auth/methods`, `POST /auth/local`
+  - `GET /me`, `PATCH /me`, `POST /auth/logout` (204; client navigates to `/login`)
   - `GET /integrations`, `DELETE /integrations/{provider}` (admin)
   - `GET/POST /admin/users`, `PATCH /admin/users/{id}`, `DELETE /admin/users/{id}`, `PATCH /admin/users/{id}/role`
   - `GET /admin/audit?limit&offset&tool&status`
   - Paginated endpoints (`/admin/users`, `/admin/audit`) return `{total, items}`; `api.ts` unwraps `items`.
 - **Browser redirects (not fetch):** `{API}/auth/google`, `{API}/auth/discord` (login) and
   `{API}/integrations/{provider}/connect` (OAuth connect).
-- **Auth/session:** the frontend never handles tokens. The API sets a `dobby_session` cookie during OAuth,
+- **Auth/session:** the frontend never handles tokens. The API sets a `dobby_session` cookie during either OAuth or local login,
   and the browser sends it back through `credentials: 'include'`. The server layout forwards it
   explicitly. Signing in only works if the API allows credentialed cross-origin requests from the
   frontend's origin.
-- **Caching:** query keys are `['me']`, `['integrations']` and
+- **Caching:** query keys include `['login-methods']`, `['me']`, `['integrations']` and
   `['admin', 'users' | 'settings' | 'audit', ...]`. Mutations invalidate the list they change.
+
+## Login behavior
+
+The login page reads server-side `AUTH_MODE` through `/auth/methods`; there is no separate frontend auth-mode variable. Local login posts `{username, password}` with credentials included, then navigates to `/dashboard`. The form uses username/current-password autocomplete, disables submit while pending, and displays API errors inline. API discovery failures show a connection error. Google login accepts verified emails from any domain; the UI labels the roster field **Google email**, while the API retains `uw_email`. Local credentials are created/reset by the server CLI, not the user-management form.
+
+For LAN access, use the same server LAN IP/hostname in `DASHBOARD_URL` and `API_URL` (ports 3000/8000). The API address must be reachable from both the browser and the frontend container, since the dashboard server layout also calls `/me`. See [README setup](../README.md#step-5-dashboard-login).
 
 ## Config and environment variables
 

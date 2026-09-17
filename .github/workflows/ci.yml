@@ -18,6 +18,8 @@ jobs:
       - run: ruff check bot scripts tests
       - run: ruff format --check bot scripts tests
       - run: python -m pytest -q
+      - run: pip install fastapi authlib itsdangerous aiosqlite
+      - run: python -m pytest dashboard/tests -q
       # compose.yaml marks credentials as required (:?); placeholders let the file validate.
       - run: docker compose --env-file .env.example config --quiet
         env:

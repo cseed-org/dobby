@@ -36,7 +36,7 @@ Design: [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/BOT_ARCHITECTURE.md](docs/B
 | `postgres` | Postgres 16: users and calendar emails, dashboard sessions, which services are connected, the audit log | — |
 | `migrate` | Runs the Alembic migrations once, then exits | — |
 | `bot` | The Discord bot (Python). Talks to Discord, Gemini, Composio and Postgres. No inbound ports | — |
-| `dashboard` | FastAPI API: UW-Google/Discord login, user roster, service-account connections, audit log | 8000 |
+| `dashboard` | FastAPI API: OAuth or local username/password login, user roster, service-account connections, audit log | 8000 |
 | `frontend` | Next.js web UI for the dashboard | 3000 |
 
 Composio sits between Dobby and Google Calendar / Notion / Instagram / LinkedIn: it hosts the OAuth flows, stores the tokens, and exposes each service as "actions" the bot calls. Dobby never sees a Google or Meta token.
@@ -51,7 +51,7 @@ Seven steps. Steps 1–5 gather credentials into `.env`, step 6 checks them, ste
 | 2 | Create the Discord bot, fill in IDs | Yes |
 | 3 | Get a Gemini API key | Yes |
 | 4 | Get a Composio API key and prepare each service | Yes |
-| 5 | Set up dashboard login (Google + Discord OAuth) | Yes |
+| 5 | Choose dashboard login: OAuth, local LAN account, or both | Yes |
 | 6 | Check the configuration | No |
 | 7 | Start Dobby, add users, connect the services | Yes |
 
@@ -81,7 +81,7 @@ If you have host Python, `python scripts/bootstrap.py` does the same and repairs
 
 1. In the [Discord Developer Portal](https://discord.com/developers/applications), create an application named **Dobby**.
 2. Under **Bot**, copy the token into `.env` as `DISCORD_TOKEN`, and enable **Message Content Intent** (required for mentions and channel context). No Presence or Server Members intent is needed.
-3. Under **OAuth2**, note the **Client ID** and generate a **Client Secret**; put them in `.env` as `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (the dashboard's "Sign in with Discord" uses them). Add the redirect URL `http://localhost:8000/auth/discord/callback` (replace the host if the API will be reached elsewhere).
+3. **Only if enabling Discord dashboard login:** under **OAuth2**, note the **Client ID** and generate a **Client Secret**; put them in `.env` as `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` (the dashboard's "Sign in with Discord" uses them). Add the redirect URL `http://localhost:8000/auth/discord/callback` (replace the host if the API will be reached elsewhere).
 4. Invite the bot with the `bot` and `applications.commands` scopes and these channel permissions: **View Channels**, **Send Messages**, **Send Messages in Threads**, **Read Message History** (without it Dobby answers with no context). Do not grant Administrator or Manage Roles.
 5. Enable Discord Developer Mode, copy the server, role and channel IDs into `.env`:
 
@@ -121,9 +121,54 @@ The bot calls a curated list of Composio actions per service (see `bot/integrati
 
 ### Step 5: Dashboard login
 
-The dashboard has no passwords. People sign in with a `uw.edu` Google account or with Discord, and only if an admin has added them first.
+Choose `AUTH_MODE=oauth` (default), `local` (username/password on your LAN), or `both` (both options on the sign-in page). Local accounts do not require Google/Discord OAuth credentials or `BOOTSTRAP_ADMIN_EMAIL`. Bot and integration credentials are separate and still required by the full Compose stack.
 
-1. **Google:** in Google Cloud, create an OAuth client of type **Web application** with authorized redirect URI `http://localhost:8000/auth/google/callback`; set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. The API only accepts accounts in the `uw.edu` hosted domain.
+| `AUTH_MODE` | Sign-in options | Admin setup |
+|---|---|---|
+| `oauth` (default) | Google or Discord | Bootstrap email or existing admin |
+| `local` | Username/password on your LAN | Interactive local-admin command |
+| `both` | OAuth and local username/password | Either setup; optionally link accounts |
+
+#### Local username/password setup (another machine on your network)
+
+1. Find the server's LAN IPv4 address (`ipconfig` on Windows or `hostname -I` on Linux). In `.env`, replace the sample IP below with that address:
+
+   ```dotenv
+   AUTH_MODE=local
+   DASHBOARD_URL=http://192.168.1.50:3000
+   API_URL=http://192.168.1.50:8000
+   ```
+
+   Keep `SECRET_KEY` set to a random secret. Use this same LAN address from both computers; `localhost` on the second computer would point to the wrong machine.
+
+2. Build the updated migration image and dashboard, apply the database migration, and start the UI:
+
+   ```sh
+   docker compose build migrate dashboard frontend
+   docker compose run --rm migrate
+   docker compose up -d dashboard frontend
+   ```
+
+3. Create your admin account (replace `leona` with your chosen username):
+
+   ```sh
+   docker compose exec dashboard python -m dashboard.local_admin leona
+   ```
+
+   Enter a password of 12-256 characters twice at the hidden prompts. Re-running this command resets the password and revokes that user's existing sessions. To attach local credentials to an existing Google account, append `--email you@gmail.com`; otherwise this creates a separate local admin.
+
+4. On either computer, open `http://192.168.1.50:3000/login` and enter your username/password. If blocked by the host firewall, allow inbound TCP ports 3000 and 8000 from your local subnet on the private network profile.
+
+Set `AUTH_MODE=both` and recreate the dashboard with `docker compose up -d --force-recreate dashboard` to retain local login while enabling OAuth; configure the OAuth credentials and redirect URIs as described below. `AUTH_MODE=oauth` disables local login and existing local sessions. Switching to `local` disables OAuth and existing OAuth sessions.
+
+Local login and local sessions require a loopback or private-network source address. The API blocks all non-local requests in `local` mode. Keep this deployment on a trusted LAN, with no router port forwarding or public tunnel/reverse proxy: Docker/proxies can mask the original client address, so the host firewall remains the network boundary. HTTP is supported for LAN use, but it does not encrypt passwords or session cookies; use HTTPS if other network users are not trusted. The login limiter allows five attempts per source IP per minute in the shipped single-worker process; it resets on restart.
+
+#### OAuth setup
+
+
+With OAuth enabled, people sign in with a Google account from any email domain or with Discord, and only if an admin has added them first.
+
+1. **Google:** in Google Cloud, create an OAuth client of type **Web application** with authorized redirect URI `http://localhost:8000/auth/google/callback`; set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. Set the Google Auth Platform audience to **External** to allow personal Google accounts. The API requires a verified email and a pre-registered user.
 2. **Discord:** done in step 2 (`DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET`).
 3. Generate a cookie-signing secret and set `SECRET_KEY`:
 
@@ -135,8 +180,34 @@ The dashboard has no passwords. People sign in with a `uw.edu` Google account or
 openssl rand -hex 32                                                         # Pi/Linux
 ```
 
-4. Set `BOOTSTRAP_ADMIN_EMAIL` to your own `uw.edu` address. The first start creates that admin user so someone can log in and add everyone else.
+4. Set `BOOTSTRAP_ADMIN_EMAIL` to the exact email address of the Google account you will sign in with (for example, `you@gmail.com`). When OAuth is enabled and no admin exists, startup creates that admin user (or promotes the matching user). If a local admin already exists, use the admin setup/recovery instructions below.
 5. `DASHBOARD_URL` is where browsers reach the web UI (default `http://localhost:3000`); `API_URL` is where browsers reach the API (default `http://localhost:8000`). Change both if Dobby runs on a Pi you open from other machines, and use the same hosts in the OAuth redirect URIs above. `API_URL` is baked into the frontend at build time, so rebuild the `frontend` service after changing it.
+
+#### Make yourself an OAuth admin
+
+In the root `.env`, set `BOOTSTRAP_ADMIN_EMAIL=you@gmail.com`, using the exact Google email you will sign in with. Rebuild and recreate the dashboard and frontend:
+
+```text
+docker compose up -d --build dashboard frontend
+```
+
+Open `http://localhost:3000/login` (or your configured `DASHBOARD_URL`) and choose **Sign in with Google**. When no admin exists, startup creates your admin account or promotes your existing user. No UW address is needed. In Google Cloud, ensure your OAuth app's audience is **External**; an Internal app still blocks accounts outside its organization.
+
+If an admin already exists, the bootstrap setting intentionally does nothing. Have that admin add/promote you under **Users**, or, if you control the deployment and need to recover access, open the database shell:
+
+```text
+docker compose exec postgres psql -U dobby -d dobby
+```
+
+Run this SQL, replacing the sample email with your Google account email:
+
+```sql
+INSERT INTO users (uw_email, display_name, role)
+VALUES ('you@gmail.com', 'Your Name', 'admin')
+ON CONFLICT (uw_email) DO UPDATE SET role = 'admin';
+```
+
+Exit with `\q` and sign in. The legacy database/API field name `uw_email` now stores Google emails from any domain; removing the domain restriction needs no schema migration, but local login requires migration 003.
 
 ### Step 6: Check your configuration
 
@@ -173,8 +244,8 @@ docker compose logs --tail 50 -f bot dashboard
 
 Then, in a browser:
 
-1. Open `DASHBOARD_URL` (default <http://localhost:3000>) and sign in with the bootstrap admin's Google account.
-2. **Users:** add teammates — display name, UW email, their Discord user ID (so `@mentions` and `/email` work) and their calendar email. Anyone can later change their own calendar email on the dashboard home page or with `/email` in Discord.
+1. Open `DASHBOARD_URL` (default <http://localhost:3000>) and sign in with your local admin username/password or a pre-registered OAuth admin account, depending on `AUTH_MODE`.
+2. **Users:** add teammates — display name, Google email, their Discord user ID (so `@mentions` and `/email` work) and their calendar email. Anyone can later change their own calendar email on the dashboard home page or with `/email` in Discord.
 3. **Service accounts** (admin only): press **Connect** for Google Calendar, Notion, Instagram and LinkedIn. Each opens Composio's OAuth flow for that service under the `dobby` entity; approve it with the group's account and you land back on the page with a **Connected** badge.
 4. In Discord, try `/help`, then `/events` — Dobby lists the connected calendar's upcoming events.
 
@@ -299,8 +370,11 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 | Replies have no context | Grant the bot Read Message History in that channel |
 | `composio_action_unknown` in the bot log | Composio renamed an action; list current names (docs/BOT_ARCHITECTURE.md) and update the integration's `ACTIONS` |
 | Tool calls fail with "no connected account" | Connect that service on the dashboard's Service accounts page; the entity must match `COMPOSIO_ENTITY_ID` |
-| Dashboard login says not pre-registered | An admin must add the user (UW email or Discord ID) first; the first admin comes from `BOOTSTRAP_ADMIN_EMAIL` |
-| Google login rejected | Only `uw.edu` accounts; redirect URI must be `API_URL/auth/google/callback` |
+| Dashboard login says not pre-registered | An admin must add the user (Google email or Discord ID) first; OAuth bootstrap uses `BOOTSTRAP_ADMIN_EMAIL` only when no admin exists; local admins use the CLI in Step 5 |
+| Local username/password rejected | Check `AUTH_MODE=local` or `both`; reset with `docker compose exec dashboard python -m dashboard.local_admin USERNAME`. After five attempts, wait one minute. |
+| Dashboard unreachable from another computer | Use the server LAN IP in both URL variables, rebuild/recreate `frontend`, and allow TCP 3000/8000 from your local subnet. Use the same frontend origin as `DASHBOARD_URL`. |
+| Login method disabled / old session rejected | Switching `AUTH_MODE` disables sessions from the excluded provider; sign in again using an enabled method. |
+| Google login rejected | Use a verified, pre-registered Google email and an External OAuth audience; redirect URI must be `API_URL/auth/google/callback` |
 | Connect button returns to Composio's page, no "Connected" badge | The Composio redirect points at the API's `/integrations/<provider>/callback`; `API_URL` must be reachable from the browser |
 | Frontend calls the wrong API host | `API_URL` is baked at build time: `docker compose build frontend && docker compose up -d frontend` |
 | Instagram commands say `INSTAGRAM_USER_ID is not set` | Set it in `.env` and recreate the bot |
