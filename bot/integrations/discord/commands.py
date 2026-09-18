@@ -71,17 +71,19 @@ def register(bot):
     async def help_command(interaction: discord.Interaction):
         if not await bot.gate(interaction):
             return
-        sections = [say("help_intro"), f"Team timezone: {bot.config.timezone}"]
+        sections = [say("help_intro"), f"Dobby keeps time in {bot.config.timezone}."]
         for integration in bot.integrations:
             if integration.help_lines:
                 sections.append(f"**{integration.label}**\n" + "\n".join(integration.help_lines))
         sections.append(
             "**You**\n"
             "`/email action:set email:you@uw.edu` → the address Dobby invites you with\n"
-            "Mention `@Dobby` in an enabled channel for anything in natural language. "
-            "Posts to Instagram and LinkedIn always show a preview with Confirm/Cancel first.\n"
-            f"Dobby reads the last {bot.config.context_limit} messages in the channel for context; "
-            "nothing is stored. Your request and that context go to Gemini; free-tier data may improve "
-            "Google products."
+            "Mention `@Dobby` in an enabled channel and Dobby will listen, whatever words you "
+            "use. Before anything goes to Instagram or LinkedIn, Dobby shows you a preview and "
+            "waits for Confirm. Dobby would never post without asking!\n"
+            f"Dobby reads the last {bot.config.context_limit} messages in this channel for "
+            "context and stores none of them. Your request and that context go to Google's "
+            "Gemini; on the free tier Google may use them to improve its products. Dobby "
+            "thought you should know."
         )
         await interaction.edit_original_response(content="\n\n".join(sections)[:2000])

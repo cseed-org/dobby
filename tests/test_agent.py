@@ -28,13 +28,13 @@ def make_config():
 
 def make_text_candidate(text):
     part = SimpleNamespace(text=text, function_call=None)
-    return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
+    return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(role="model", parts=[part]))])
 
 
 def make_fn_candidate(tool_name, args):
     # SimpleNamespace, not Mock: `name` is special on Mock.
     part = SimpleNamespace(text="", function_call=SimpleNamespace(name=tool_name, args=args))
-    return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
+    return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(role="model", parts=[part]))])
 
 
 def declaration(name):
@@ -59,11 +59,12 @@ def run_kwargs(**overrides):
     return kwargs
 
 
-def agent_patches():
-    return (
-        patch("bot.agent.genai.Client"),
-        patch("bot.agent.record_action", new=AsyncMock()),
-    )
+def gen(client):
+    """The async Gemini call the agent awaits (`client.aio.models.generate_content`)."""
+    models = client.return_value.aio.models
+    if not isinstance(models.generate_content, AsyncMock):
+        models.generate_content = AsyncMock()
+    return models.generate_content
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +75,7 @@ def agent_patches():
 def test_agent_returns_text_on_first_call():
     async def run():
         with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
-            client.return_value.models.generate_content.return_value = make_text_candidate("Event created.")
+            gen(client).return_value = make_text_candidate("Event created.")
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
         assert result == AgentResult("Event created.", [])
 
@@ -90,7 +91,7 @@ def test_composio_tool_runs_under_service_entity_and_is_recorded():
             patch("bot.agent.run_action", run_action),
             patch("bot.agent.record_action", record),
         ):
-            client.return_value.models.generate_content.side_effect = [
+            gen(client).side_effect = [
                 make_fn_candidate("GOOGLECALENDAR_CREATE_EVENT", {"summary": "Sync"}),
                 make_text_candidate("Meeting created."),
             ]
@@ -119,7 +120,7 @@ def test_failed_tool_is_recorded_as_error_and_unknown_tool_is_refused():
             patch("bot.agent.run_action", new=AsyncMock(return_value={"success": False, "error": "boom"})),
             patch("bot.agent.record_action", record),
         ):
-            client.return_value.models.generate_content.side_effect = [
+            gen(client).side_effect = [
                 make_fn_candidate("GOOGLECALENDAR_CREATE_EVENT", {}),
                 make_fn_candidate("GITHUB_CREATE_ISSUE", {}),  # not in the registry
                 make_text_candidate("Sorry."),
@@ -145,14 +146,14 @@ def test_local_tool_runs_in_process_and_can_queue_a_pending_action():
             patch("bot.agent.run_action", new=AsyncMock()) as run_action,
             patch("bot.agent.record_action", new=AsyncMock()),
         ):
-            client.return_value.models.generate_content.side_effect = [
+            gen(client).side_effect = [
                 make_fn_candidate("draft_linkedin_post", {"text": "hello"}),
                 make_text_candidate("Please confirm."),
             ]
             result = await Agent(make_config(), registry(local=(tool,))).run(
                 session=AsyncMock(), **run_kwargs()
             )
-            contents = client.return_value.models.generate_content.call_args.kwargs["contents"]
+            contents = gen(client).call_args.kwargs["contents"]
 
         run_action.assert_not_awaited()
         handler.assert_awaited_once()
@@ -168,7 +169,7 @@ def test_local_tool_exception_becomes_an_error_result():
     async def run():
         record = AsyncMock()
         with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", record):
-            client.return_value.models.generate_content.side_effect = [
+            gen(client).side_effect = [
                 make_fn_candidate("explode", {}),
                 make_text_candidate("ok"),
             ]
@@ -185,11 +186,9 @@ def test_agent_stops_after_max_tool_calls():
             patch("bot.agent.run_action", new=AsyncMock(return_value={"success": True, "data": {}})),
             patch("bot.agent.record_action", new=AsyncMock()),
         ):
-            client.return_value.models.generate_content.return_value = make_fn_candidate(
-                "GOOGLECALENDAR_CREATE_EVENT", {}
-            )
+            gen(client).return_value = make_fn_candidate("GOOGLECALENDAR_CREATE_EVENT", {})
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
-        assert "tool call limit" in result.text
+        assert "smaller" in result.text.lower()
 
     asyncio.run(run())
 
@@ -198,15 +197,16 @@ def test_agent_returns_error_message_on_gemini_failure():
     async def run():
         class FakeAPIError(Exception):
             code = 503
+            status = "UNAVAILABLE"
 
         with (
             patch("bot.agent.genai.Client") as client,
             patch("bot.agent.record_action", new=AsyncMock()),
             patch("bot.agent.errors.APIError", FakeAPIError),
         ):
-            client.return_value.models.generate_content.side_effect = FakeAPIError()
+            gen(client).side_effect = FakeAPIError()
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
-        assert "unavailable" in result.text.lower()
+        assert "magic" in result.text.lower()  # Dobby's phrasing for a transient outage
 
     asyncio.run(run())
 
@@ -214,12 +214,12 @@ def test_agent_returns_error_message_on_gemini_failure():
 def test_channel_context_precedes_the_request_as_untrusted_data():
     async def run():
         with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
-            client.return_value.models.generate_content.return_value = make_text_candidate("ok")
+            gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry()).run(
                 session=AsyncMock(),
                 **run_kwargs(request="book it", context=["[10:00] Maya: lunch friday?", "[10:01] Leo: sure"]),
             )
-            contents = client.return_value.models.generate_content.call_args.kwargs["contents"]
+            contents = gen(client).call_args.kwargs["contents"]
         assert len(contents) == 2
         assert contents[0].parts[0].text == CONTEXT_INTRO + "[10:00] Maya: lunch friday?\n[10:01] Leo: sure"
         assert contents[1].parts[0].text == "book it"
@@ -230,7 +230,7 @@ def test_channel_context_precedes_the_request_as_untrusted_data():
 def test_system_prompt_includes_integration_guidance_people_and_timezone():
     async def run():
         with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
-            client.return_value.models.generate_content.return_value = make_text_candidate("ok")
+            gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry(prompt="Notion: search before creating.")).run(
                 session=AsyncMock(),
                 **run_kwargs(
@@ -241,7 +241,7 @@ def test_system_prompt_includes_integration_guidance_people_and_timezone():
                     timezone="America/Los_Angeles",
                 ),
             )
-            config = client.return_value.models.generate_content.call_args.kwargs["config"]
+            config = gen(client).call_args.kwargs["config"]
         system = config.system_instruction
         assert "Notion: search before creating." in system
         assert "Maya Chen — maya@uw.edu" in system and "Sam — no email on file" in system
@@ -254,9 +254,90 @@ def test_system_prompt_includes_integration_guidance_people_and_timezone():
 def test_no_tools_means_none_is_passed_to_gemini():
     async def run():
         with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
-            client.return_value.models.generate_content.return_value = make_text_candidate("ok")
+            gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry(composio=())).run(session=AsyncMock(), **run_kwargs())
-            config = client.return_value.models.generate_content.call_args.kwargs["config"]
+            config = gen(client).call_args.kwargs["config"]
         assert config.tools is None
+
+    asyncio.run(run())
+
+
+def test_function_responses_are_sent_with_role_user():
+    """Regression: role="tool" is rejected by the Gemini API with 400 INVALID_ARGUMENT.
+
+    Only "user" and "model" are valid roles, so every request that called a tool failed while
+    plain chat kept working. Pin the role that carries function results back.
+    """
+
+    async def run():
+        with (
+            patch("bot.agent.genai.Client") as client,
+            patch("bot.agent.run_action", new=AsyncMock(return_value={"success": True, "data": {}})),
+            patch("bot.agent.record_action", new=AsyncMock()),
+        ):
+            gen(client).side_effect = [
+                make_fn_candidate("GOOGLECALENDAR_CREATE_EVENT", {"summary": "Sync"}),
+                make_text_candidate("Dobby has done it!"),
+            ]
+            agent = Agent(make_config(), registry())
+            agent.toolset = Mock()
+            await agent.run(session=AsyncMock(), **run_kwargs())
+            contents = gen(client).call_args.kwargs["contents"]
+
+        tool_turn = contents[-1]
+        assert tool_turn.parts[0].function_response is not None
+        assert tool_turn.role == "user"
+        assert {c.role for c in contents} <= {"user", "model"}
+
+    asyncio.run(run())
+
+
+def test_rejected_request_is_not_reported_as_a_transient_outage():
+    """A 400 is Dobby's own bad request: telling the user to retry would be wrong."""
+
+    async def run():
+        class FakeAPIError(Exception):
+            code = 400
+            status = "INVALID_ARGUMENT"
+
+        with (
+            patch("bot.agent.genai.Client") as client,
+            patch("bot.agent.record_action", new=AsyncMock()),
+            patch("bot.agent.errors.APIError", FakeAPIError),
+        ):
+            gen(client).side_effect = FakeAPIError()
+            result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+
+        assert "admin" in result.text.lower()  # points at the logs, not at retrying
+
+    asyncio.run(run())
+
+
+def test_candidate_without_parts_answers_instead_of_crashing():
+    """MAX_TOKENS / SAFETY finishes hand back content with parts=None."""
+
+    async def run():
+        empty = SimpleNamespace(
+            candidates=[SimpleNamespace(content=SimpleNamespace(parts=None), finish_reason="MAX_TOKENS")]
+        )
+        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+            gen(client).return_value = empty
+            result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+
+        assert "Dobby" in result.text
+
+    asyncio.run(run())
+
+
+def test_system_prompt_carries_the_dobby_voice():
+    async def run():
+        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+            gen(client).return_value = make_text_candidate("ok")
+            await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+            system = gen(client).call_args.kwargs["config"].system_instruction
+        assert "third person" in system
+        assert "house-elf" in system
+        # No gendered honorifics: Dobby must not guess anything about the requester.
+        assert '"sir"' in system and "Never" in system
 
     asyncio.run(run())
