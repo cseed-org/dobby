@@ -20,7 +20,7 @@ settings and the audit log, and the admin-only Composio connections for Dobby's 
 | `local_admin.py` | Interactive CLI to create/reset a local admin or link an existing Google user |
 | `routers/admin.py` | Admin-only endpoints for users (create, edit, role, delete), guild settings and the audit log |
 | `routers/integrations.py` | Admin-only Composio connect, callback, list and disconnect for the single service entity |
-| `requirements.txt` | fastapi, uvicorn, sqlalchemy[asyncio], asyncpg, authlib, httpx, pydantic, python-dotenv, itsdangerous, composio-core |
+| `requirements.txt` | fastapi, uvicorn, sqlalchemy[asyncio], asyncpg, authlib, httpx, pydantic, python-dotenv, itsdangerous, composio |
 | `Dockerfile` | python:3.12-slim image that runs `uvicorn dashboard.main:app` on port 8000 |
 
 ## Startup and wiring (`main.py`)

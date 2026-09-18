@@ -1,7 +1,5 @@
 """Notion: the team workspace Dobby searches and writes notes into."""
 
-from composio import App
-
 from ..base import Integration
 from . import commands
 
@@ -22,7 +20,7 @@ PROMPT = (
 INTEGRATION = Integration(
     key="notion",
     label="Notion",
-    app=App.NOTION,
+    app="notion",
     actions=ACTIONS,
     prompt=PROMPT,
     register_commands=commands.register,

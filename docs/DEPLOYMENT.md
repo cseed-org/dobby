@@ -191,3 +191,15 @@ For Compose, migration, dashboard or frontend changes, run `git pull --ff-only`,
 9. If updates are enabled, push a harmless change and verify publication plus the Pi update.
 
 If hidden password confirmation repeatedly fails, run the local-admin command with `--no-confirm` to enter it once. Input remains hidden and length-checked. Use an interactive terminal without `-T`; the default confirmation flow allows three attempts and never saves mismatched input.
+
+## Composio cannot write its cache in the read-only bot container
+
+The Composio SDK writes downloaded tool files to a cache directory, created the first time a tool
+returns a file attachment (import itself no longer touches the filesystem). The bot service sets
+`COMPOSIO_CACHE_DIR=/tmp/.composio` so it uses the existing writable `/tmp` tmpfs while the root
+filesystem remains read-only; the test service uses the same setting. The symptom is a tool call
+failing with a `RuntimeError` naming `COMPOSIO_CACHE_DIR`, or a `pathlib.mkdir` permission error —
+not a startup failure. Update `compose.yaml` and run
+`docker compose up -d --no-deps --force-recreate bot`. No image rebuild is required for this
+environment-only change, and `docker compose restart` does not apply it. The cache is temporary and
+disappears when the container stops; service connections remain in Composio.

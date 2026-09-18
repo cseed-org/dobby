@@ -4,8 +4,6 @@ Gemini gets local tools only (list our posts, draft a post, draft a story); the 
 that actually publish run inside PendingActions after the requester confirms.
 """
 
-from composio import App
-
 from ..base import Integration
 from . import commands
 from .publish import DRAFT_POST_TOOL, DRAFT_STORY_TOOL, LIST_POSTS_TOOL
@@ -20,7 +18,7 @@ PROMPT = (
 INTEGRATION = Integration(
     key="instagram",
     label="Instagram",
-    app=App.INSTAGRAM,
+    app="instagram",
     actions=(),  # publishing is confirm-gated; reads go through the local list tool
     local_tools=(LIST_POSTS_TOOL, DRAFT_POST_TOOL, DRAFT_STORY_TOOL),
     prompt=PROMPT,

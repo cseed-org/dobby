@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from composio import App
 from google.genai import types
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +30,7 @@ class RunContext:
     guild_id: str
     channel_id: str
     discord_user_id: str
-    toolset: object = None  # ComposioToolSet, for tools that build PendingActions
+    toolset: object = None  # Composio client, for tools that build PendingActions
     config: object = None  # bot Config (entity id, Instagram account id, ...)
     pending: list[PendingAction] = field(default_factory=list)
 
@@ -66,7 +65,7 @@ class LocalTool:
 class Integration:
     key: str
     label: str
-    app: App
+    app: str  # Composio toolkit slug
     actions: tuple[str, ...] = ()  # curated Composio actions Gemini may call directly
     local_tools: tuple[LocalTool, ...] = ()
     prompt: str = ""  # appended to the system prompt

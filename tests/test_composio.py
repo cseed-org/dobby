@@ -35,28 +35,37 @@ def test_gemini_schema_keeps_only_supported_keys_recursively():
 def fake_toolset(models=None, error=None):
     toolset = Mock()
     if error:
-        toolset.get_action_schemas.side_effect = error
+        toolset.tools.get_raw_composio_tools.side_effect = error
     else:
-        toolset.get_action_schemas.return_value = models or []
+        toolset.tools.get_raw_composio_tools.return_value = models or []
     return toolset
 
 
-def model(name, **props):
-    params = SimpleNamespace(
-        model_dump=lambda exclude_none=True: {"type": "object", "properties": props, "title": "P"}
-    )
-    return SimpleNamespace(name=name, description=f"{name} desc", parameters=params)
+def model(slug, **props):
+    """A composio ``Tool``: ``input_parameters`` is a plain dict on the current SDK."""
+    params = {"type": "object", "properties": props, "title": "P"}
+    return SimpleNamespace(slug=slug, description=f"{slug} desc", input_parameters=params)
 
 
 def test_declarations_for_converts_models_and_skips_unknown_actions(caplog):
     toolset = fake_toolset([model("NOTION_SEARCH_NOTION_PAGE", query={"type": "string", "title": "Q"})])
     decls = declarations_for(toolset, ("NOTION_SEARCH_NOTION_PAGE", "NOTION_NOT_A_THING"))
-    toolset.get_action_schemas.assert_called_once_with(
-        actions=["NOTION_SEARCH_NOTION_PAGE", "NOTION_NOT_A_THING"], check_connected_accounts=False
+    toolset.tools.get_raw_composio_tools.assert_called_once_with(
+        tools=["NOTION_SEARCH_NOTION_PAGE", "NOTION_NOT_A_THING"]
     )
     assert [d.name for d in decls] == ["NOTION_SEARCH_NOTION_PAGE"]
     assert decls[0].parameters.properties["query"].type.name == "STRING"
     assert "composio_action_unknown action=NOTION_NOT_A_THING" in caplog.text
+
+
+def test_declarations_for_accepts_pydantic_style_parameters():
+    """Older/alternate schema shapes still expose ``model_dump``; the bridge unwraps them."""
+    tool = model("NOTION_X")
+    tool.input_parameters = SimpleNamespace(
+        model_dump=lambda exclude_none=True: {"type": "object", "properties": {"q": {"type": "string"}}}
+    )
+    decls = declarations_for(fake_toolset([tool]), ("NOTION_X",))
+    assert decls[0].parameters.properties["q"].type.name == "STRING"
 
 
 def test_declarations_for_survives_composio_being_down(caplog):
@@ -67,16 +76,27 @@ def test_declarations_for_survives_composio_being_down(caplog):
 
 def test_execute_tool_wraps_success_and_failure():
     toolset = Mock()
-    toolset.execute_action.return_value = {"id": "1"}
+    toolset.tools.execute.return_value = {"successful": True, "data": {"id": "1"}, "error": None}
     assert execute_tool(toolset, "A", {"x": 1}, "dobby") == {"success": True, "data": {"id": "1"}}
-    toolset.execute_action.assert_called_once_with(action="A", params={"x": 1}, entity_id="dobby")
-    toolset.execute_action.side_effect = RuntimeError("nope")
+    toolset.tools.execute.assert_called_once_with(slug="A", arguments={"x": 1}, user_id="dobby")
+
+    # Composio reports tool-level failure in the envelope, not as an exception.
+    toolset.tools.execute.return_value = {"successful": False, "data": {}, "error": "boom"}
+    assert execute_tool(toolset, "A", {}, "dobby") == {"success": False, "error": "boom"}
+
+    toolset.tools.execute.return_value = {"successful": False, "data": {}, "error": None}
+    assert execute_tool(toolset, "A", {}, "dobby") == {
+        "success": False,
+        "error": "Composio tool execution failed",
+    }
+
+    toolset.tools.execute.side_effect = RuntimeError("nope")
     assert execute_tool(toolset, "A", {}, "dobby") == {"success": False, "error": "nope"}
 
 
 def test_run_action_runs_off_the_event_loop():
     toolset = Mock()
-    toolset.execute_action.return_value = "ok"
+    toolset.tools.execute.return_value = {"successful": True, "data": "ok", "error": None}
     assert asyncio.run(run_action(toolset, "A", {}, "dobby")) == {"success": True, "data": "ok"}
 
 

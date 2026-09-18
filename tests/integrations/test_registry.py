@@ -31,12 +31,10 @@ def test_publishing_integrations_expose_no_direct_composio_actions():
 
 
 def test_build_registry_merges_composio_and_local_tools_with_owners():
-    from composio import App
-
     local = LocalTool(decl("local_one"), Mock())
     integrations = (
-        Integration(key="a", label="A", app=App.NOTION, actions=("A_ONE", "A_TWO"), prompt="A rules."),
-        Integration(key="b", label="B", app=App.NOTION, local_tools=(local,), prompt="  "),
+        Integration(key="a", label="A", app="notion", actions=("A_ONE", "A_TWO"), prompt="A rules."),
+        Integration(key="b", label="B", app="notion", local_tools=(local,), prompt="  "),
     )
     with patch(
         "bot.integrations.declarations_for", side_effect=lambda ts, actions: [decl(n) for n in actions]

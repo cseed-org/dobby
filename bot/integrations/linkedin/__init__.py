@@ -1,7 +1,5 @@
 """LinkedIn: publishing posts from the group's account, always behind Confirm."""
 
-from composio import App
-
 from ..base import Integration
 from . import commands
 from .publish import DRAFT_TOOL
@@ -14,7 +12,7 @@ PROMPT = (
 INTEGRATION = Integration(
     key="linkedin",
     label="LinkedIn",
-    app=App.LINKEDIN,
+    app="linkedin",
     actions=(),  # Gemini never posts directly; drafts go through the confirm gate
     local_tools=(DRAFT_TOOL,),
     prompt=PROMPT,

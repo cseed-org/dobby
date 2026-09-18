@@ -57,6 +57,8 @@ services:
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:?}
       GEMINI_API_KEY: ${GEMINI_API_KEY:?}
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:?}
+      # Tools returning file attachments write a cache; the root filesystem is read-only.
+      COMPOSIO_CACHE_DIR: /tmp/.composio
       COMPOSIO_ENTITY_ID: ${COMPOSIO_ENTITY_ID:-dobby}
       INSTAGRAM_USER_ID: ${INSTAGRAM_USER_ID:-}
       NOTION_PARENT_PAGE_ID: ${NOTION_PARENT_PAGE_ID:-}

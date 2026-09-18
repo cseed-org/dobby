@@ -131,11 +131,12 @@ Invalid config raises `ConfigError`, and the process exits with code 2.
    to `bot.tree`), local tools next to them, and anything that publishes in `publish.py` as
    `PendingAction` factories.
 2. Add it to `INTEGRATIONS` in `bot/integrations/__init__.py`, and to `SUPPORTED_PROVIDERS` in
-   `dashboard/routers/integrations.py` plus the card list in the frontend Integrations page.
+   `dashboard/routers/integrations.py` (a `{UI provider key: Composio toolkit slug}` map, the same
+   slug as `Integration.app`) plus the card list in the frontend Integrations page.
 3. **Verify action names.** Composio's catalog is only listable with an API key, so the `ACTIONS`
    tuples and the constants in `publish.py` are the expected names. Confirm them once with:
-   `ComposioToolSet(api_key=...).get_action_schemas(apps=[App.<SERVICE>], check_connected_accounts=False)`
-   and print `.name` / `.parameters`. Unknown names are logged at startup
+   `Composio(api_key=...).tools.get_raw_composio_tools(toolkits=["<toolkit-slug>"])`
+   and print `.slug` / `.input_parameters`. Unknown names are logged at startup
    (`composio_action_unknown`) and skipped rather than crashing.
 4. Add help lines and a prompt paragraph; add tests under `tests/integrations/<service>/`.
 
@@ -159,3 +160,7 @@ referenced by the Discord package; `tests/test_voice.py` requires 20 distinct li
   waits for `migrate` and a healthy `postgres`. Read-only container, no published ports.
 - Discord permissions: Send Messages and **Read Message History** in mention channels (without the
   latter, requests still run but with no channel context).
+
+The read-only Compose bot container sets `COMPOSIO_CACHE_DIR=/tmp/.composio`. The SDK creates the
+directory the first time a tool returns a downloadable file, so it must be on the writable `/tmp`
+tmpfs. This cache is disposable; it is not the persistent service-connection store.

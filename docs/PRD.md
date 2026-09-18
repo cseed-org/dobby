@@ -332,7 +332,7 @@ API_URL=http://localhost:8000  # use server LAN address for another machine; reb
 |-------|-----------|
 | Bot | Python 3.12+, discord.py 2.x |
 | Agent LLM | Google Gemini (google-genai) |
-| Tool integration | Composio (composio-core) |
+| Tool integration | Composio (`composio` SDK) |
 | Dashboard API | FastAPI, authlib, SQLAlchemy 2 (async) |
 | Database | PostgreSQL 16 |
 | Migrations | Alembic |

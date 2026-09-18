@@ -370,6 +370,7 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 | Symptom | Check |
 | --- | --- |
 | Cannot connect to Docker | Start Docker Desktop/Engine; use Linux containers |
+| Tool call fails with `RuntimeError` naming `COMPOSIO_CACHE_DIR`, or `pathlib.mkdir` denied | Composio needs a writable cache for downloaded tool files. The bot service sets `COMPOSIO_CACHE_DIR: /tmp/.composio` under `environment`, using the existing `/tmp` tmpfs. After updating `compose.yaml`, run `docker compose up -d --no-deps --force-recreate bot`; a restart alone does not apply environment changes. |
 | Bot repeats `startup_failed type=RuntimeError` | Run `docker compose run --rm --no-deps bot python -m bot.main --check`. If configuration passes, rebuild the updated bot (`docker compose build bot`), recreate it, and inspect `docker compose logs --tail=100 bot` for `stage` and `startup_frame` diagnostics. These omit exception messages and credential values. A healthy dashboard does not imply the bot started. |
 | Migration fails with `No module named psycopg2` | Update the checkout to include the async migration fix, then run `docker compose build migrate`, `docker compose run --rm migrate`, and `docker compose up -d dashboard frontend`. The migration uses the installed `asyncpg` driver; no database reset is needed. |
 | `migrate` fails / bot cannot reach the database | `docker compose logs postgres migrate`; `POSTGRES_PASSWORD` must be set before the first start (changing it later requires `docker compose down -v`) |
@@ -393,7 +394,7 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 
 ## Development
 
-Python 3.12 (the Docker image's version; `composio-core`'s dependencies do not build on 3.14 yet) and Node 20:
+Python 3.12 (matches the Docker image) and Node 20:
 
 ```powershell
 python -m venv .venv

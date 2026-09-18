@@ -3,7 +3,7 @@ google-genai>=1.0,<2
 pydantic>=2.11,<3
 python-dotenv>=1.1,<2
 tzdata
-composio-core>=0.7.0
+composio==0.21.1
 asyncpg>=0.29.0
 sqlalchemy[asyncio]>=2.0.0
 alembic>=1.13.0

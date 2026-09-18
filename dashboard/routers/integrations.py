@@ -5,6 +5,7 @@ LinkedIn connections the bot acts through. Nobody links a personal account here,
 is admin-only and the table holds one row per provider.
 """
 
+import asyncio
 import logging
 import os
 
@@ -24,29 +25,52 @@ router = APIRouter()
 DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 COMPOSIO_API_KEY = os.environ.get("COMPOSIO_API_KEY", "")
 # Must match the bot's COMPOSIO_ENTITY_ID so tool calls find these connections.
-ENTITY_ID = os.environ.get("COMPOSIO_ENTITY_ID", "dobby")
+ENTITY_ID = os.environ.get("COMPOSIO_ENTITY_ID", "dobby").strip() or "dobby"
 
-# Supported providers mapped to Composio App enum values. Mirrors bot/integrations/*: one folder each.
-SUPPORTED_PROVIDERS = {"google_calendar", "notion", "instagram", "linkedin"}
+# UI provider keys mapped to current Composio toolkit slugs.
+SUPPORTED_PROVIDERS = {
+    "google_calendar": "googlecalendar",
+    "notion": "notion",
+    "instagram": "instagram",
+    "linkedin": "linkedin",
+}
 
 
-def _get_composio_app(provider: str):
-    """Return the Composio App enum for a given provider string."""
-    from composio import App  # import at call time so app still loads without composio
-
-    mapping = {
-        "google_calendar": App.GOOGLECALENDAR,
-        "notion": App.NOTION,
-        "instagram": App.INSTAGRAM,
-        "linkedin": App.LINKEDIN,
-    }
-    app = mapping.get(provider)
+def _get_toolkit(provider: str) -> str:
+    app = SUPPORTED_PROVIDERS.get(provider)
     if app is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported provider '{provider}'. Supported: {sorted(SUPPORTED_PROVIDERS)}",
         )
     return app
+
+
+def _get_composio():
+    if not COMPOSIO_API_KEY:
+        raise HTTPException(status_code=503, detail="Composio is not configured")
+    from composio import Composio
+
+    return Composio(api_key=COMPOSIO_API_KEY)
+
+
+def _authorize(toolkit: str, callback_url: str) -> str:
+    session = _get_composio().create(user_id=ENTITY_ID)
+    connection = session.authorize(toolkit, callback_url=callback_url)
+    if not connection.redirect_url:
+        raise RuntimeError("Composio did not return a Connect Link")
+    return connection.redirect_url
+
+
+def _connection_is_active(toolkit: str, account_id: str) -> bool:
+    # Filter server-side by identity; user_id on retrieved accounts is deprecated.
+    accounts = _get_composio().connected_accounts.list(
+        user_ids=[ENTITY_ID],
+        toolkit_slugs=[toolkit],
+        connected_account_ids=[account_id],
+        statuses=["ACTIVE"],
+    )
+    return any(account.id == account_id and account.status == "ACTIVE" for account in accounts.items)
 
 
 # ---------------------------------------------------------------------------
@@ -84,28 +108,16 @@ async def connect_integration(
             detail="Composio is not configured",
         )
 
-    composio_app = _get_composio_app(provider)
+    toolkit = _get_toolkit(provider)
 
     try:
-        from composio import ComposioToolSet
-
-        toolset = ComposioToolSet(api_key=COMPOSIO_API_KEY)
-        entity = toolset.get_entity(entity_id=ENTITY_ID)
-        # After the provider's OAuth screen, Composio sends the browser back here so the
-        # connection is recorded; without redirect_url it would stop on Composio's own page.
-        connection_req = entity.initiate_connection(
-            app_name=composio_app,
-            redirect_url=str(request.url_for("integration_callback", provider=provider)),
+        redirect_url = await asyncio.to_thread(
+            _authorize, toolkit, str(request.url_for("integration_callback", provider=provider))
         )
-        redirect_url = connection_req.redirectUrl
     except HTTPException:
         raise
-    except Exception:
-        logger.exception(
-            "Failed to initiate Composio connection for entity %s provider %s",
-            ENTITY_ID,
-            provider,
-        )
+    except Exception as exc:
+        logger.error("composio_connect_failed provider=%s type=%s", provider, type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not reach Composio",
@@ -121,12 +133,21 @@ async def integration_callback(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Handle Composio OAuth callback — record the provider as connected."""
-    if provider not in SUPPORTED_PROVIDERS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported provider '{provider}'",
-        )
+    """Record only a verified active connection belonging to Dobby's service identity."""
+    toolkit = _get_toolkit(provider)
+    account_id = request.query_params.get("connected_account_id")
+    if request.query_params.get("status") != "success" or not account_id:
+        raise HTTPException(status_code=400, detail="Composio connection was not completed")
+
+    try:
+        active = await asyncio.to_thread(_connection_is_active, toolkit, account_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("composio_verify_failed provider=%s type=%s", provider, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Could not verify Composio connection") from None
+    if not active:
+        raise HTTPException(status_code=400, detail="No active connection for this service account")
 
     try:
         result = await db.execute(
@@ -134,17 +155,17 @@ async def integration_callback(
         )
         integration = result.scalar_one_or_none()
 
-        async with db.begin():
-            if integration is None:
-                integration = Integration(
-                    provider=provider,
-                    composio_entity_id=ENTITY_ID,
-                    connected_by=admin.id,
-                )
-            else:
-                integration.composio_entity_id = ENTITY_ID
-                integration.connected_by = admin.id
-            db.add(integration)
+        if integration is None:
+            integration = Integration(
+                provider=provider,
+                composio_entity_id=ENTITY_ID,
+                connected_by=admin.id,
+            )
+        else:
+            integration.composio_entity_id = ENTITY_ID
+            integration.connected_by = admin.id
+        db.add(integration)
+        await db.commit()
     except Exception:
         logger.exception("Failed to store integration for provider %s", provider)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
@@ -169,8 +190,8 @@ async def disconnect_integration(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No '{provider}' integration found",
             )
-        async with db.begin():
-            await db.delete(integration)
+        await db.delete(integration)
+        await db.commit()
     except HTTPException:
         raise
     except Exception:

@@ -1,7 +1,5 @@
 """Google Calendar: the team calendar Dobby creates, moves and deletes events on."""
 
-from composio import App
-
 from ..base import Integration
 from . import commands
 from .tools import LOOKUP_TOOL
@@ -25,7 +23,7 @@ PROMPT = (
 INTEGRATION = Integration(
     key="google_calendar",
     label="Google Calendar",
-    app=App.GOOGLECALENDAR,
+    app="googlecalendar",
     actions=ACTIONS,
     local_tools=(LOOKUP_TOOL,),
     prompt=PROMPT,
