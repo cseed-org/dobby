@@ -16,13 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import require_admin
 from ..database import get_db
+from ..login_config import dashboard_url
 from ..models import Integration, User
 from ..schemas import IntegrationOut
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
 COMPOSIO_API_KEY = os.environ.get("COMPOSIO_API_KEY", "")
 # Must match the bot's COMPOSIO_ENTITY_ID so tool calls find these connections.
 ENTITY_ID = os.environ.get("COMPOSIO_ENTITY_ID", "dobby").strip() or "dobby"
@@ -170,7 +170,7 @@ async def integration_callback(
         logger.exception("Failed to store integration for provider %s", provider)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
 
-    return RedirectResponse(url=f"{DASHBOARD_URL}/dashboard/integrations")
+    return RedirectResponse(url=f"{dashboard_url()}/dashboard/integrations")
 
 
 @router.delete("/{provider}", status_code=204)

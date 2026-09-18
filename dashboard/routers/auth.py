@@ -22,7 +22,7 @@ from ..auth import (
 )
 from ..database import get_db
 from ..models import User
-from ..login_config import auth_mode, require_provider
+from ..login_config import auth_mode, dashboard_url, dashboard_urls, require_provider
 from ..passwords import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,8 @@ async def login_methods():
 @router.post("/local")
 async def local_login(body: LocalLogin, request: Request, db: AsyncSession = Depends(get_db)):
     require_provider("local", request)
-    if request.headers.get("origin") not in (None, DASHBOARD_URL):
+    origin = request.headers.get("origin")
+    if origin is not None and origin.rstrip("/") not in dashboard_urls():
         raise HTTPException(403, "Invalid login origin")
     now = time.monotonic()
     for host in list(_attempts):
@@ -97,9 +98,6 @@ oauth.register(
     access_token_url="https://discord.com/api/oauth2/token",
     client_kwargs={"scope": "identify email"},
 )
-
-DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3000")
-
 
 # ---------------------------------------------------------------------------
 # Google OAuth
@@ -151,7 +149,7 @@ async def auth_google_callback(request: Request, db: AsyncSession = Depends(get_
         logger.exception("Failed to create session for user %s", user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
 
-    response = RedirectResponse(url=f"{DASHBOARD_URL}/dashboard")
+    response = RedirectResponse(url=f"{dashboard_url()}/dashboard")
     set_session_cookie(response, token_str)
     return response
 
@@ -216,7 +214,7 @@ async def auth_discord_callback(request: Request, db: AsyncSession = Depends(get
         logger.exception("Failed to create session for user %s", user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
 
-    response = RedirectResponse(url=f"{DASHBOARD_URL}/dashboard")
+    response = RedirectResponse(url=f"{dashboard_url()}/dashboard")
     set_session_cookie(response, token_str)
     return response
 

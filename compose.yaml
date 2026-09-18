@@ -90,6 +90,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://dobby:${POSTGRES_PASSWORD}@postgres:5432/dobby
       SECRET_KEY: ${SECRET_KEY:?}
       AUTH_MODE: ${AUTH_MODE:-oauth}
+      # Empty = loopback/RFC1918 only; add a VPN range here to let those clients log in.
+      LOCAL_NETWORKS: ${LOCAL_NETWORKS:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}

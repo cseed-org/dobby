@@ -12,7 +12,7 @@ from .database import engine, get_db
 from .routers import auth, admin, integrations
 from .schemas import MeUpdate, UserOut
 from .seed import seed_bootstrap_admin
-from .login_config import auth_mode, is_local_request
+from .login_config import auth_mode, client_host, dashboard_urls, is_local_request
 from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +33,8 @@ app = FastAPI(title="Dobby Dashboard", version="1.0.0", lifespan=lifespan)
 @app.middleware("http")
 async def local_network_only(request, call_next):
     if auth_mode() == "local" and not is_local_request(request):
+        logger.warning("local_access_denied client=%s path=%s — add its range to LOCAL_NETWORKS",
+                       client_host(request), request.url.path)
         return JSONResponse({"detail": "Local network access only"}, status_code=403)
     return await call_next(request)
 
@@ -45,7 +47,7 @@ app.add_middleware(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("DASHBOARD_URL", "http://localhost:3000")],
+    allow_origins=dashboard_urls(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
