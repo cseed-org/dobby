@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 
 export default function LoginPage() {
   const router = useRouter()
-  const { data: methods, isLoading, isError } = useQuery({
+  const { data: methods, isLoading, isError, error: methodsError } = useQuery({
     queryKey: ['login-methods'], queryFn: api.loginMethods,
   })
   const [username, setUsername] = useState('')
@@ -51,7 +51,15 @@ export default function LoginPage() {
         </div>
 
         {isLoading && <p role="status" className="text-sm text-zinc-400">Loading sign-in options...</p>}
-        {isError && <p role="alert" className="text-sm text-red-400">Cannot reach the dashboard API. Check the server address and connection, then reload.</p>}
+        {/* Show what the API actually said — "Local network access only" and a CORS
+            failure are the same symptom here, and only the detail tells them apart. */}
+        {isError && (
+          <p role="alert" className="text-sm text-red-400">
+            Cannot reach the dashboard API
+            {methodsError instanceof Error && methodsError.message ? ` — ${methodsError.message}` : ''}.
+            {' '}Check the server address and connection, then reload.
+          </p>
+        )}
         {methods?.local && (
           <form onSubmit={login} className="mb-6 flex flex-col gap-3">
             <h2 className="text-lg font-medium text-zinc-100">Local account</h2>
