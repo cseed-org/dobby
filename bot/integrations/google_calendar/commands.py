@@ -10,7 +10,7 @@ log = logging.getLogger("scheduler")
 
 def register(bot):
     @bot.tree.command(
-        name="schedule", description="Create, change or delete a Google Calendar meeting with Gemini"
+        name="schedule", description="Create, change or delete a Google Calendar meeting with Dobby"
     )
     @app_commands.guild_only()
     @app_commands.describe(request="Describe one meeting operation with a date, time and duration")

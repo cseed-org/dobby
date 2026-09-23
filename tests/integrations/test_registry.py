@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-from google.genai import types
+from bot import AIModels as types
 
 from bot.integrations import INTEGRATIONS, build_registry
 from bot.integrations.base import Integration, LocalTool

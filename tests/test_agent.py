@@ -4,7 +4,10 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from google.genai import types
+import httpx
+import pytest
+from google.genai import errors
+from bot import AIModels as types
 
 from bot.agent import Agent, AgentResult, CONTEXT_INTRO
 from bot.integrations import ToolRegistry
@@ -22,6 +25,7 @@ def make_config():
         composio_key="fake-composio",
         composio_entity="dobby",
         model="gemini-test",
+        model_backup="gemini-3.1-flash-lite",
         timezone="UTC",
     )
 
@@ -74,10 +78,102 @@ def gen(client):
 
 def test_agent_returns_text_on_first_call():
     async def run():
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = make_text_candidate("Event created.")
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
         assert result == AgentResult("Event created.", [])
+        assert gen(client).await_count == 1
+        assert gen(client).await_args.kwargs["model"] == "gemini-test"
+        assert client.call_args.kwargs["http_options"].retry_options.attempts == 1
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("code", [408, 429, 500, 502, 503, 504])
+def test_transient_error_switches_to_backup_on_first_failure(code):
+    async def run():
+        with patch("bot.AIModels.genai.Client") as client:
+            gen(client).side_effect = [errors.APIError(code, {}), make_text_candidate("Recovered.")]
+            result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+        assert result.text == "Recovered."
+        calls = gen(client).await_args_list
+        assert [c.kwargs["model"] for c in calls] == ["gemini-test", "gemini-3.1-flash-lite"]
+        assert calls[0].kwargs["contents"] == calls[1].kwargs["contents"]
+        assert calls[0].kwargs["config"] == calls[1].kwargs["config"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error", [httpx.ReadTimeout("timeout"), TimeoutError()])
+def test_timeout_uses_backup(error):
+    async def run():
+        with patch("bot.AIModels.genai.Client") as client:
+            gen(client).side_effect = [error, make_text_candidate("Recovered.")]
+            result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+        assert result.text == "Recovered."
+        assert gen(client).await_args.kwargs["model"] == "gemini-3.1-flash-lite"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("code", [400, 401, 403, 404])
+def test_permanent_error_does_not_try_backup(code):
+    async def run():
+        with patch("bot.AIModels.genai.Client") as client:
+            gen(client).side_effect = errors.APIError(code, {})
+            result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
+        assert gen(client).await_count == 1
+        assert "admin" in result.text.lower()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("backup,expected_calls", [("", 1), ("gemini-test", 1), ("backup", 2)])
+def test_fallback_is_bounded_even_when_both_models_fail(backup, expected_calls):
+    async def run():
+        cfg = make_config()
+        cfg.model_backup = backup
+        with patch("bot.AIModels.genai.Client") as client:
+            gen(client).side_effect = errors.APIError(503, {})
+            result = await Agent(cfg, registry()).run(session=AsyncMock(), **run_kwargs())
+        assert gen(client).await_count == expected_calls
+        assert "magic" in result.text.lower()
+
+    asyncio.run(run())
+
+
+def test_fallback_preserves_completed_tools_pending_actions_and_resets_for_next_request():
+    pending = PendingAction("linkedin", "LinkedIn post", "draft", AsyncMock())
+    handler = AsyncMock(side_effect=lambda ctx, params: ctx.queue(pending))
+    tool = LocalTool(declaration("draft_linkedin_post"), handler)
+
+    async def run():
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+            gen(client).side_effect = [
+                make_fn_candidate("draft_linkedin_post", {"text": "draft"}),
+                errors.APIError(503, {}),
+                make_fn_candidate("GOOGLECALENDAR_FIND_EVENT", {}),
+                make_text_candidate("Please confirm."),
+                make_text_candidate("Next request."),
+            ]
+            agent = Agent(make_config(), registry(composio=("GOOGLECALENDAR_FIND_EVENT",), local=(tool,)))
+            with patch("bot.agent.run_action", new=AsyncMock(return_value={"success": True})) as action:
+                result = await agent.run(session=AsyncMock(), **run_kwargs())
+                await agent.run(session=AsyncMock(), **run_kwargs())
+            assert action.await_count == 1
+        assert result.pending == [pending]
+        assert result.text == "Please confirm."
+        handler.assert_awaited_once()
+        pending.execute.assert_not_awaited()
+        assert [c.kwargs["model"] for c in gen(client).await_args_list] == [
+            "gemini-test",
+            "gemini-test",
+            "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-test",
+        ]
+        history = gen(client).await_args_list[2].kwargs["contents"]
+        assert any(getattr(p, "function_response", None) for c in history for p in c.parts)
 
     asyncio.run(run())
 
@@ -87,7 +183,7 @@ def test_composio_tool_runs_under_service_entity_and_is_recorded():
         run_action = AsyncMock(return_value={"success": True, "data": {"id": "abc"}})
         record = AsyncMock()
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.run_action", run_action),
             patch("bot.agent.record_action", record),
         ):
@@ -116,7 +212,7 @@ def test_failed_tool_is_recorded_as_error_and_unknown_tool_is_refused():
     async def run():
         record = AsyncMock()
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.run_action", new=AsyncMock(return_value={"success": False, "error": "boom"})),
             patch("bot.agent.record_action", record),
         ):
@@ -142,7 +238,7 @@ def test_local_tool_runs_in_process_and_can_queue_a_pending_action():
 
     async def run():
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.run_action", new=AsyncMock()) as run_action,
             patch("bot.agent.record_action", new=AsyncMock()),
         ):
@@ -168,7 +264,7 @@ def test_local_tool_exception_becomes_an_error_result():
 
     async def run():
         record = AsyncMock()
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", record):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", record):
             gen(client).side_effect = [
                 make_fn_candidate("explode", {}),
                 make_text_candidate("ok"),
@@ -182,7 +278,7 @@ def test_local_tool_exception_becomes_an_error_result():
 def test_agent_stops_after_max_tool_calls():
     async def run():
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.run_action", new=AsyncMock(return_value={"success": True, "data": {}})),
             patch("bot.agent.record_action", new=AsyncMock()),
         ):
@@ -200,9 +296,9 @@ def test_agent_returns_error_message_on_gemini_failure():
             status = "UNAVAILABLE"
 
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.record_action", new=AsyncMock()),
-            patch("bot.agent.errors.APIError", FakeAPIError),
+            patch("bot.AIModels.errors.APIError", FakeAPIError),
         ):
             gen(client).side_effect = FakeAPIError()
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
@@ -213,7 +309,7 @@ def test_agent_returns_error_message_on_gemini_failure():
 
 def test_channel_context_precedes_the_request_as_untrusted_data():
     async def run():
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry()).run(
                 session=AsyncMock(),
@@ -229,7 +325,7 @@ def test_channel_context_precedes_the_request_as_untrusted_data():
 
 def test_system_prompt_includes_integration_guidance_people_and_timezone():
     async def run():
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry(prompt="Notion: search before creating.")).run(
                 session=AsyncMock(),
@@ -253,7 +349,7 @@ def test_system_prompt_includes_integration_guidance_people_and_timezone():
 
 def test_no_tools_means_none_is_passed_to_gemini():
     async def run():
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry(composio=())).run(session=AsyncMock(), **run_kwargs())
             config = gen(client).call_args.kwargs["config"]
@@ -271,7 +367,7 @@ def test_function_responses_are_sent_with_role_user():
 
     async def run():
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.run_action", new=AsyncMock(return_value={"success": True, "data": {}})),
             patch("bot.agent.record_action", new=AsyncMock()),
         ):
@@ -301,9 +397,9 @@ def test_rejected_request_is_not_reported_as_a_transient_outage():
             status = "INVALID_ARGUMENT"
 
         with (
-            patch("bot.agent.genai.Client") as client,
+            patch("bot.AIModels.genai.Client") as client,
             patch("bot.agent.record_action", new=AsyncMock()),
-            patch("bot.agent.errors.APIError", FakeAPIError),
+            patch("bot.AIModels.errors.APIError", FakeAPIError),
         ):
             gen(client).side_effect = FakeAPIError()
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
@@ -320,7 +416,7 @@ def test_candidate_without_parts_answers_instead_of_crashing():
         empty = SimpleNamespace(
             candidates=[SimpleNamespace(content=SimpleNamespace(parts=None), finish_reason="MAX_TOKENS")]
         )
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = empty
             result = await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
 
@@ -331,7 +427,7 @@ def test_candidate_without_parts_answers_instead_of_crashing():
 
 def test_system_prompt_carries_the_dobby_voice():
     async def run():
-        with patch("bot.agent.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
+        with patch("bot.AIModels.genai.Client") as client, patch("bot.agent.record_action", new=AsyncMock()):
             gen(client).return_value = make_text_candidate("ok")
             await Agent(make_config(), registry()).run(session=AsyncMock(), **run_kwargs())
             system = gen(client).call_args.kwargs["config"].system_instruction

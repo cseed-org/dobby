@@ -82,8 +82,7 @@ def register(bot):
             "use. Before anything goes to Instagram or LinkedIn, Dobby shows you a preview and "
             "waits for Confirm. Dobby would never post without asking!\n"
             f"Dobby reads the last {bot.config.context_limit} messages in this channel for "
-            "context and stores none of them. Your request and that context go to Google's "
-            "Gemini; on the free tier Google may use them to improve its products. Dobby "
-            "thought you should know."
+            "context and stores none of them. Your request and that context go to this server's "
+            "configured AI model. Ask an admin where it runs and which data policy applies."
         )
         await interaction.edit_original_response(content="\n\n".join(sections)[:2000])

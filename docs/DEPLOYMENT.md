@@ -1,6 +1,6 @@
 # Docker deployment: Raspberry Pi and Windows
 
-Dobby runs on Windows Docker Desktop (`linux/amd64`) and 64-bit Raspberry Pi OS (`linux/arm64`). Use [README.md](../README.md#set-up-dobby) for the Discord, Gemini, Composio and dashboard-login setup; this page covers the machine itself. No paid cloud server is needed.
+Dobby runs on Windows Docker Desktop (`linux/amd64`) and 64-bit Raspberry Pi OS (`linux/arm64`). Use [README.md](../README.md#set-up-dobby) for the Discord, AI model, Composio and dashboard-login setup; this page covers the machine itself. No paid cloud server is needed.
 
 ## Prepare the Pi
 

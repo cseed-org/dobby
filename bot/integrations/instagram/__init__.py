@@ -1,6 +1,6 @@
 """Instagram: publishing posts and stories from the group's account, always behind Confirm.
 
-Gemini gets local tools only (list our posts, draft a post, draft a story); the Graph API calls
+The model gets local tools only (list our posts, draft a post, draft a story); the Graph API calls
 that actually publish run inside PendingActions after the requester confirms.
 """
 

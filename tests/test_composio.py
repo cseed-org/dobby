@@ -4,7 +4,13 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from bot.composio import declarations_for, execute_tool, find_key, gemini_schema, run_action
+import httpx
+import pytest
+from composio_client import AuthenticationError, PermissionDeniedError
+
+from bot.composio import declarations_for, execute_tool, find_key, run_action
+from bot.AIModels import gemini_schema
+from bot.models import ConfigError
 
 
 def test_gemini_schema_keeps_only_supported_keys_recursively():
@@ -54,7 +60,7 @@ def test_declarations_for_converts_models_and_skips_unknown_actions(caplog):
         tools=["NOTION_SEARCH_NOTION_PAGE", "NOTION_NOT_A_THING"]
     )
     assert [d.name for d in decls] == ["NOTION_SEARCH_NOTION_PAGE"]
-    assert decls[0].parameters.properties["query"].type.name == "STRING"
+    assert decls[0].parameters["properties"]["query"]["type"] == "string"
     assert "composio_action_unknown action=NOTION_NOT_A_THING" in caplog.text
 
 
@@ -65,13 +71,28 @@ def test_declarations_for_accepts_pydantic_style_parameters():
         model_dump=lambda exclude_none=True: {"type": "object", "properties": {"q": {"type": "string"}}}
     )
     decls = declarations_for(fake_toolset([tool]), ("NOTION_X",))
-    assert decls[0].parameters.properties["q"].type.name == "STRING"
+    assert decls[0].parameters["properties"]["q"]["type"] == "string"
 
 
 def test_declarations_for_survives_composio_being_down(caplog):
     assert declarations_for(fake_toolset(error=RuntimeError("down")), ("X",)) == []
     assert "composio_schemas_failed" in caplog.text
     assert declarations_for(fake_toolset(), ()) == []  # nothing requested → no call
+
+
+@pytest.mark.parametrize("error_class,status", [(AuthenticationError, 401), (PermissionDeniedError, 403)])
+def test_rejected_project_credential_stops_startup_without_leaking_secrets(error_class, status, caplog):
+    response = httpx.Response(
+        status,
+        request=httpx.Request("GET", "https://backend.composio.dev/api/v3.1/tools"),
+        headers={"x-request-id": "request-123"},
+    )
+    error = error_class("secret-must-not-be-logged", response=response, body={"error": "secret"})
+    with pytest.raises(ConfigError, match="Composio rejected"):
+        declarations_for(fake_toolset(error=error), ("NOTION_SEARCH_NOTION_PAGE",))
+    assert f"status={status} request_id=request-123" in caplog.text
+    assert "composio_auth_rejected" in caplog.text
+    assert "secret" not in caplog.text
 
 
 def test_execute_tool_wraps_success_and_failure():

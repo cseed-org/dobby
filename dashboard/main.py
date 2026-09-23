@@ -79,10 +79,11 @@ async def update_me(
     if not update_data:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nothing to update")
     try:
-        async with db.begin():
-            for field, value in update_data.items():
-                setattr(current_user, field, value)
-            db.add(current_user)
+        # Authentication already opened the session's transaction.
+        for field, value in update_data.items():
+            setattr(current_user, field, value)
+        db.add(current_user)
+        await db.commit()
     except Exception:
         logger.exception("Failed to update profile for user %s", current_user.id)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")

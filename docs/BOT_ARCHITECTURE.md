@@ -1,8 +1,8 @@
 # Dobby bot architecture
 
 Dobby is a Discord bot for a single guild that turns natural-language requests into actions on
-Google Calendar, Notion, Instagram and LinkedIn. A Gemini model drives a tool-calling loop; each
-service lives in its own folder under `bot/integrations/` and declares what Gemini may do with it.
+Google Calendar, Notion, Instagram and LinkedIn. A configurable AI model drives a tool-calling loop; each
+service lives in its own folder under `bot/integrations/` and declares what the model may do with it.
 Nothing conversational is stored: each request reads recent channel messages live, and only
 tool-call metadata is recorded (to `agent_actions`). Anything published to the outside world
 (Instagram, LinkedIn) is previewed in Discord and waits for the requester to press **Confirm**.
@@ -16,8 +16,9 @@ to them only through the shared Postgres database and the shared Composio entity
 bot/
 ├── main.py            entrypoint: logging, Config.load(), --check, Bot(config).run()
 ├── config.py          frozen Config from env/.env; allowlists, timezone, CONTEXT_MESSAGE_LIMIT, ids
-├── agent.py           generic Gemini loop over a ToolRegistry → AgentResult(text, pending)
-├── composio.py        curated action schemas → Gemini declarations; execute under COMPOSIO_ENTITY_ID
+├── AIModels.py        provider config, adapters, message/tool formats and per-request fallback
+├── agent.py           provider-independent loop over a ToolRegistry → AgentResult(text, pending)
+├── composio.py        curated action schemas → model tool declarations; execute under COMPOSIO_ENTITY_ID
 ├── memory.py          Postgres: users by Discord ID / name, calendar emails, agent_actions audit rows
 ├── db.py, models.py, voice.py, responses/   session factory; errors + email helpers; Dobby's phrasings
 └── integrations/
@@ -38,23 +39,23 @@ Tests mirror this under `tests/` and `tests/integrations/<service>/`.
 
 | Type | Meaning |
 | --- | --- |
-| `Integration` | `key`, `label`, Composio `app`, curated `actions` Gemini may call directly, `local_tools`, a `prompt` paragraph, `register_commands(bot)`, `help_lines` |
-| `LocalTool` | A Gemini `FunctionDeclaration` plus an async handler that runs in-process (`(RunContext, params) -> dict`) |
+| `Integration` | `key`, `label`, Composio `app`, curated `actions` the model may call directly, `local_tools`, a `prompt` paragraph, `register_commands(bot)`, `help_lines` |
+| `LocalTool` | An `AIModels.FunctionDeclaration` plus an async handler that runs in-process (`(RunContext, params) -> dict`) |
 | `PendingAction` | Something that must not happen until the requester confirms: `integration`, `label`, `preview`, and an async `execute()` |
 | `RunContext` | Per-run state a handler may use: DB session, guild/channel/user ids, the Composio toolset, `Config`, and `pending` — `ctx.queue(action)` parks a `PendingAction` and tells the model it is awaiting confirmation |
 
 `build_registry()` walks `INTEGRATIONS`, asks Composio for the schema of every curated action
-(`composio.declarations_for`, which strips the JSON Schema down to what Gemini accepts and skips
+(`composio.declarations_for`, which preserves JSON Schema and skips
 unknown names with a warning), adds the local tools, and joins the prompts.
 
-| Folder | Composio actions Gemini calls directly | Local tools | Commands | Confirm-gated? |
+| Folder | Composio actions the model calls directly | Local tools | Commands | Confirm-gated? |
 | --- | --- | --- | --- | --- |
 | `google_calendar` | create / find / update / delete event, find free slots | `lookup_calendar_email` (users table) | `/schedule`, `/events` | no |
 | `notion` | search, fetch, create page, add content | — | `/notion search`, `/notion note` | no |
 | `instagram` | none | `list_instagram_posts`, `draft_instagram_post`, `draft_instagram_story` | `/instagram posts`, `post`, `story` | **yes** |
 | `linkedin` | none | `draft_linkedin_post` | `/linkedin post` | **yes** |
 
-Publishing integrations expose no direct Composio actions: Gemini can only *draft*, and the Graph
+Publishing integrations expose no direct Composio actions: the model can only *draft*, and the Graph
 API / LinkedIn calls run inside `PendingAction.execute()` after Confirm.
 
 ## Request lifecycle
@@ -65,7 +66,7 @@ flowchart TD
     G -- denied --> V1["say('not_authorized' / 'cooldown')"]
     G -- ok --> C["discord/context.py: last CONTEXT_MESSAGE_LIMIT human messages<br/>resolve @mentions → users (DB)"]
     C --> A["Agent.run (registry tools + prompts)"]
-    A --> L["Gemini generate_content"]
+    A --> L["AIModels: configured model"]
     L -- Composio action --> T["composio.run_action<br/>(entity = COMPOSIO_ENTITY_ID)"]
     L -- local tool --> U["LocalTool.handler(ctx, params)"]
     U -- publish? --> Q["ctx.queue(PendingAction)"]
@@ -87,7 +88,7 @@ flowchart TD
    system prompt = persona + every integration's `prompt` + mentioned people. Function calls are
    dispatched by name: local tools run in-process, anything else the registry owns goes through
    Composio in a worker thread. Every call is recorded (tool name, ok/error, duration) and fed back.
-   Stops on plain text, after 8 calls, or on a Gemini `APIError`.
+   Stops on plain text, after 8 calls, or on a normalized `ModelError` after any configured fallback.
 4. **Result.** `send_result()` edits the reply. If any `PendingAction`s were queued, the preview and a
    `ConfirmView` are attached. Confirm runs each action, records `<service>.publish`, and reports
    `published` / `publish_failed`; Cancel or a 2-minute timeout discards them. Other users' clicks
@@ -115,10 +116,13 @@ Invitees only need a `calendar_email` on their `users` row; nobody links a perso
 
 `Config.load()` reads the process env, then a dotenv file (`DOBBY_ENV_FILE`, default `.env`).
 
-- **Required:** `DISCORD_TOKEN`, `DISCORD_GUILD_ID`, `GEMINI_API_KEY`, `COMPOSIO_API_KEY`, `DATABASE_URL`
+- **Required:** `DISCORD_TOKEN`, `DISCORD_GUILD_ID`, `COMPOSIO_API_KEY`, `DATABASE_URL`
 - **Access:** `ALLOWED_USER_IDS`, `ALLOWED_ROLE_IDS` (at least one; default deny),
   `ALLOWED_CHANNEL_IDS`, `MENTION_CHANNEL_IDS` (empty means any channel)
-- **Optional:** `GEMINI_MODEL`, `TEAM_TIMEZONE`, `COMPOSIO_ENTITY_ID` (default `dobby`),
+- **Models:** `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY`, `AI_API_KEY_BACKUP`, `AI_MODEL_BACKUP`,
+  `LOCAL_MODEL`, `AI_BASE_URL`. Cloud models require a key; local mode permits an empty key.
+  Legacy `GEMINI_*` settings remain supported. See [model setup](../README.md#step-3-configure-an-ai-model).
+- **Optional:** `TEAM_TIMEZONE`, `COMPOSIO_ENTITY_ID` (default `dobby`),
   `CONTEXT_MESSAGE_LIMIT` (0–500, default 50), `INSTAGRAM_USER_ID` (required to use Instagram;
   commands explain if missing), `NOTION_PARENT_PAGE_ID` (where `/notion note` creates pages)
 

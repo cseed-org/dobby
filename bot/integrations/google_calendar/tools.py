@@ -1,6 +1,6 @@
 """Local tools: things the calendar needs that never go through Composio."""
 
-from google.genai import types
+from bot.AIModels import FunctionDeclaration
 
 from ...memory import find_user_by_name
 from ..base import LocalTool, RunContext
@@ -20,7 +20,7 @@ async def lookup_calendar_email(ctx: RunContext, params: dict) -> dict:
 
 
 LOOKUP_TOOL = LocalTool(
-    declaration=types.FunctionDeclaration(
+    declaration=FunctionDeclaration(
         name="lookup_calendar_email",
         description=(
             "Find a server member's calendar email by their name so they can be invited to an event. "

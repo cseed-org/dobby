@@ -5,7 +5,10 @@ account is identified by INSTAGRAM_USER_ID. A story "featuring" one of our posts
 post's image or video as a story; the API cannot attach the interactive share sticker.
 """
 
-from google.genai import types
+from ipaddress import ip_address
+from urllib.parse import urlsplit
+
+from bot.AIModels import FunctionDeclaration
 
 from ...composio import find_key, run_action
 from ...models import UserError
@@ -18,6 +21,27 @@ PUBLISH = "INSTAGRAM_PUBLISH_MEDIA"
 MEDIA_FIELDS = "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp"
 MAX_POSTS = 10
 MAX_CAPTION = 2200
+
+
+def validate_media_url(value: str) -> None:
+    """Require an HTTPS media link without credentials or a local IP literal."""
+    try:
+        url = urlsplit(value)
+        if url.scheme != "https" or not url.hostname or url.username or url.password:
+            raise ValueError
+        if any(c.isspace() for c in value) or url.hostname.lower() == "localhost":
+            raise ValueError
+        # Accessing .port also rejects malformed/out-of-range port numbers.
+        if url.port not in (None, 443):
+            raise ValueError
+        try:
+            address = ip_address(url.hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ValueError
+    except ValueError:
+        raise UserError("image_url must be a public https URL without credentials") from None
 
 
 def account_id(config) -> str:
@@ -82,6 +106,7 @@ def _publish(toolset, config, entity_id: str, container_params: dict):
 
 
 def draft_post(toolset, config, entity_id: str, image_url: str, caption: str) -> PendingAction:
+    validate_media_url(image_url)
     account_id(config)  # fail early with a clear message
     caption = caption.strip()[:MAX_CAPTION]
     return PendingAction(
@@ -95,6 +120,7 @@ def draft_post(toolset, config, entity_id: str, image_url: str, caption: str) ->
 def draft_story(
     toolset, config, entity_id: str, media_url: str, *, featuring: dict | None = None
 ) -> PendingAction:
+    validate_media_url(media_url)
     account_id(config)
     params = {"media_type": "STORIES"}
     if featuring and str(featuring.get("media_type", "")).upper() == "VIDEO":
@@ -162,7 +188,7 @@ async def draft_story_tool(ctx: RunContext, params: dict) -> dict:
 
 
 LIST_POSTS_TOOL = LocalTool(
-    declaration=types.FunctionDeclaration(
+    declaration=FunctionDeclaration(
         name="list_instagram_posts",
         description="Our account's recent Instagram posts, numbered from 1 (newest), with captions and links.",
         parameters={"type": "object", "properties": {}},
@@ -171,7 +197,7 @@ LIST_POSTS_TOOL = LocalTool(
 )
 
 DRAFT_POST_TOOL = LocalTool(
-    declaration=types.FunctionDeclaration(
+    declaration=FunctionDeclaration(
         name="draft_instagram_post",
         description="Queue an Instagram photo post for the requester to confirm. Nothing is published until they press Confirm.",
         parameters={
@@ -187,7 +213,7 @@ DRAFT_POST_TOOL = LocalTool(
 )
 
 DRAFT_STORY_TOOL = LocalTool(
-    declaration=types.FunctionDeclaration(
+    declaration=FunctionDeclaration(
         name="draft_instagram_story",
         description=(
             "Queue an Instagram story for the requester to confirm. Give post_number (from "

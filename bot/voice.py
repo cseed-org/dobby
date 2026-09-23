@@ -48,8 +48,8 @@ FALLBACK = {
     "cancelled": "Dobby has discarded the draft. Nothing was published.",
     "confirm_expired": "Dobby waited 2 minutes and heard nothing, so this draft has expired.",
     "confirm_not_requester": "Only the person who asked can confirm or cancel this, if you please.",
-    "gemini_busy": "Dobby's magic is worn thin just now. Please ask again in a moment, if you please.",
-    "gemini_rejected": (
+    "model_busy": "Dobby's magic is worn thin just now. Please ask again in a moment, if you please.",
+    "model_rejected": (
         "Oh dear! Dobby's magic refused that request. This is Dobby's fault, not yours — "
         "an admin should check the bot logs."
     ),

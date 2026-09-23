@@ -4,7 +4,7 @@ from ..base import Integration
 from . import commands
 from .tools import LOOKUP_TOOL
 
-# Curated: what Gemini may call directly. Verified against Composio's catalog at deploy time
+# Curated: what the model may call directly. Verified against Composio's catalog at deploy time
 # (see docs/BOT_ARCHITECTURE.md → "Adding an integration").
 ACTIONS = (
     "GOOGLECALENDAR_CREATE_EVENT",

@@ -53,6 +53,8 @@ def test_online_uses_installed_async_driver(monkeypatch, scheme, connection_fail
 
 
 def test_offline_generates_all_migrations(monkeypatch):
+    # Alembic's fileConfig disables existing loggers, leaking into later tests.
+    monkeypatch.setattr("logging.config.fileConfig", lambda *args, **kwargs: None)
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://test:pass%25word@localhost/test")
     output = io.StringIO()
     config = Config(str(ROOT / "migrations/alembic.ini"), output_buffer=output)

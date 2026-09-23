@@ -1,4 +1,4 @@
-"""Composio bridge: curated action schemas → Gemini declarations, and execution under the service entity.
+"""Composio bridge: curated action schemas → model tool declarations, and execution under the service entity.
 
 Uses the current ``composio`` SDK's raw schemas and direct execution API, preserving Dobby's
 curated tool allowlist and local confirmation gate without a framework adapter.
@@ -8,12 +8,11 @@ import asyncio
 import logging
 
 from composio import Composio
-from google.genai import types
+from .AIModels import FunctionDeclaration
+
+from .models import ConfigError
 
 log = logging.getLogger("composio")
-
-# The subset of JSON Schema that Gemini function declarations accept.
-SCHEMA_KEYS = {"type", "description", "properties", "required", "items", "enum", "nullable"}
 
 # Required, not just tidiness: `tools.execute` raises ToolVersionRequiredError when a toolkit
 # resolves to "latest", which is the default. Pinning also keeps schemas and execution on the
@@ -26,38 +25,32 @@ def get_toolset(api_key: str) -> Composio:
     return Composio(api_key=api_key, toolkit_versions=TOOLKIT_VERSIONS)
 
 
-def gemini_schema(schema: dict) -> dict:
-    """Strip a Composio parameter schema down to what Gemini accepts (no title/default/examples/$defs)."""
-    out = {}
-    for key, value in schema.items():
-        if key not in SCHEMA_KEYS:
-            continue
-        if key == "properties" and isinstance(value, dict):
-            out[key] = {name: gemini_schema(prop) for name, prop in value.items() if isinstance(prop, dict)}
-        elif key == "items" and isinstance(value, dict):
-            out[key] = gemini_schema(value)
-        elif key == "type" and isinstance(value, list):
-            # ["string", "null"] → string + nullable
-            kinds = [v for v in value if v != "null"]
-            if kinds:
-                out["type"] = kinds[0]
-            if len(kinds) < len(value):
-                out["nullable"] = True
-        else:
-            out[key] = value
-    if "properties" in out and "type" not in out:
-        out["type"] = "object"
-    return out
-
-
-def declarations_for(toolset: Composio, actions: tuple[str, ...]) -> list[types.FunctionDeclaration]:
-    """Gemini declarations for the named Composio actions. Unknown actions are logged and skipped."""
+def declarations_for(toolset: Composio, actions: tuple[str, ...]) -> list[FunctionDeclaration]:
+    """Model tool declarations for the named Composio actions. Unknown actions are logged and skipped."""
     if not actions:
         return []
     try:
         models = toolset.tools.get_raw_composio_tools(tools=list(actions))
     except Exception as exc:
-        log.error("composio_schemas_failed actions=%s type=%s", ",".join(actions), type(exc).__name__)
+        # Authentication failures happen before tool execution, so they may never appear in
+        # the project's tool logs. Keep the request ID, not the SDK message (which can
+        # contain credentials or request data), to make this boundary diagnosable.
+        status = getattr(exc, "status_code", None)
+        response = getattr(exc, "response", None)
+        request_id = response.headers.get("x-request-id") if response is not None else None
+        log.error(
+            "composio_schemas_failed actions=%s type=%s status=%s request_id=%s",
+            ",".join(actions),
+            type(exc).__name__,
+            status,
+            request_id,
+        )
+        if status in (401, 403):
+            log.error(
+                "composio_auth_rejected: verify COMPOSIO_API_KEY in the intended Platform project; "
+                "after updating .env, recreate bot and dashboard containers (restart is insufficient)"
+            )
+            raise ConfigError("Composio rejected the configured project credential.") from None
         return []
     declarations = []
     seen = set()
@@ -65,9 +58,9 @@ def declarations_for(toolset: Composio, actions: tuple[str, ...]) -> list[types.
         params = model.input_parameters
         if hasattr(params, "model_dump"):
             params = params.model_dump(exclude_none=True)
-        schema = gemini_schema(params or {})
+        schema = params or {}
         declarations.append(
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name=model.slug,
                 description=model.description or "",
                 parameters=schema or None,

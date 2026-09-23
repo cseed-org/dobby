@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import require_admin
@@ -76,10 +77,13 @@ async def create_user(
             role=body.role,
             added_by=admin.id,
         )
-        async with db.begin():
-            db.add(user)
+        db.add(user)
+        await db.commit()
     except HTTPException:
         raise
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A user with that email or Discord ID already exists") from None
     except Exception:
         logger.exception("Failed to create user")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
@@ -103,8 +107,8 @@ async def delete_user(
         user = result.scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        async with db.begin():
-            await db.delete(user)
+        await db.delete(user)
+        await db.commit()
     except HTTPException:
         raise
     except Exception:
@@ -130,10 +134,10 @@ async def update_user(
         user = result.scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        async with db.begin():
-            for field, value in update_data.items():
-                setattr(user, field, value)
-            db.add(user)
+        for field, value in update_data.items():
+            setattr(user, field, value)
+        db.add(user)
+        await db.commit()
     except HTTPException:
         raise
     except Exception:
@@ -160,9 +164,9 @@ async def update_user_role(
         user = result.scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        async with db.begin():
-            user.role = body.role
-            db.add(user)
+        user.role = body.role
+        db.add(user)
+        await db.commit()
     except HTTPException:
         raise
     except Exception:

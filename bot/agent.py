@@ -4,8 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from google import genai
-from google.genai import errors, types
+from .AIModels import AIModels, Content, Part, ModelError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .composio import run_action
@@ -50,15 +49,12 @@ class AgentResult:
 
 
 class Agent:
-    """Gemini tool-calling loop. Knows nothing about specific services; the registry supplies them."""
+    """Provider-independent tool-calling loop. Knows nothing about specific services; the registry supplies them."""
 
     def __init__(self, config, registry):
         self.config = config
         self.registry = registry
-        self.client = genai.Client(
-            api_key=config.gemini_key,
-            http_options=types.HttpOptions(timeout=60000),
-        )
+        self.models = AIModels(config)
         self.toolset = None  # set by the Discord client so Composio actions can run
 
     async def run(
@@ -79,10 +75,8 @@ class Agent:
 
         contents = []
         if context:
-            contents.append(
-                types.Content(role="user", parts=[types.Part(text=CONTEXT_INTRO + "\n".join(context))])
-            )
-        contents.append(types.Content(role="user", parts=[types.Part(text=request)]))
+            contents.append(Content(role="user", parts=[Part(text=CONTEXT_INTRO + "\n".join(context))]))
+        contents.append(Content(role="user", parts=[Part(text=request)]))
 
         system = SYSTEM_PROMPT.format(now=now, timezone=tz)
         if self.registry.prompt:
@@ -93,39 +87,19 @@ class Agent:
             )
         tool_calls_made = 0
         start = time.monotonic()
+        model_request = self.models.start_request()
 
         while tool_calls_made < MAX_TOOL_CALLS:
             try:
-                # `aio`: the blocking client was being called straight from the event loop,
-                # stalling Discord's heartbeat for the length of every request.
-                response = await self.client.aio.models.generate_content(
-                    model=self.config.model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system,
-                        tools=self.registry.tools or None,
-                        temperature=0,
-                        max_output_tokens=4096,
-                    ),
+                content = await model_request.generate(
+                    contents=contents, system=system, tools=self.registry.tools
                 )
-            except errors.APIError as exc:
-                # Log `status` ("INVALID_ARGUMENT", "RESOURCE_EXHAUSTED", ...) next to the code so a
-                # request Gemini *rejected* is never again reported as Gemini being down. Codes and
-                # statuses are safe to log; SDK messages can carry request payloads.
-                log.error("gemini_error code=%s status=%s", exc.code, getattr(exc, "status", None))
-                transient = exc.code in (408, 429, 500, 502, 503, 504)
-                return AgentResult(say("gemini_busy" if transient else "gemini_rejected"), ctx.pending)
+            except ModelError as exc:
+                return AgentResult(say("model_busy" if exc.transient else "model_rejected"), ctx.pending)
 
-            candidate = response.candidates[0] if response.candidates else None
-            # `parts` is None whenever generation stops before emitting any (MAX_TOKENS, SAFETY, a
-            # recitation block). Iterating that raised TypeError instead of answering the requester.
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
+            parts = content.parts or []
             if not parts:
-                log.warning(
-                    "gemini_no_parts finish_reason=%s",
-                    getattr(candidate, "finish_reason", None),
-                )
+                log.warning("model_no_parts")
                 return AgentResult(say("no_answer"), ctx.pending)
 
             fn_calls = [p.function_call for p in parts if p.function_call]
@@ -140,9 +114,11 @@ class Agent:
                 )
                 return AgentResult(text or say("done"), ctx.pending)
 
-            contents.append(candidate.content)
+            contents.append(content)
             fn_results = []
             for fc in fn_calls:
+                if tool_calls_made >= MAX_TOOL_CALLS:
+                    break
                 tool_calls_made += 1
                 params = dict(fc.args) if fc.args else {}
                 call_start = time.monotonic()
@@ -156,11 +132,9 @@ class Agent:
                     status="ok" if result.get("success") else "error",
                     duration_ms=int((time.monotonic() - call_start) * 1000),
                 )
-                fn_results.append(types.Part.from_function_response(name=fc.name, response=result))
-            # Function responses go back as role="user". The Gemini API accepts only "user" and
-            # "model"; role="tool" was rejected with 400 INVALID_ARGUMENT, which broke every
-            # request that called a tool (scheduling) while plain chat kept working.
-            contents.append(types.Content(role="user", parts=fn_results))
+                fn_results.append(Part.from_function_response(name=fc.name, response=result, id=fc.id))
+            # The adapter translates tool results into each provider's wire format.
+            contents.append(Content(role="user", parts=fn_results))
             await session.commit()
 
         return AgentResult(say("tool_limit"), ctx.pending)

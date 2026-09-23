@@ -3,9 +3,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  regression:
+    name: System regression tests
+    uses: ./.github/workflows/regression.yml
   test:
     runs-on: ubuntu-latest
     steps:
@@ -40,3 +44,10 @@ jobs:
       # The same suite the developer runs locally, in the image it ships in.
       - run: docker compose -f compose.test.yaml run --rm tests
       - run: docker compose -f compose.test.yaml run --rm lint
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [test, regression]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml

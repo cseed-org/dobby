@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from google.genai import types
+from bot.AIModels import FunctionDeclaration
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:  # avoid importing the Discord client at runtime (it imports the registry)
@@ -14,7 +14,7 @@ if TYPE_CHECKING:  # avoid importing the Discord client at runtime (it imports t
 
 @dataclass(frozen=True)
 class PendingAction:
-    """Something a command or Gemini wants to do that must not happen until the requester confirms."""
+    """Something a command or the model wants to do that must not happen until the requester confirms."""
 
     integration: str
     label: str  # short, e.g. "LinkedIn post"
@@ -51,9 +51,9 @@ LocalHandler = Callable[[RunContext, dict], Awaitable[dict]]
 
 @dataclass(frozen=True)
 class LocalTool:
-    """A Gemini function that runs in-process instead of through Composio."""
+    """A model function that runs in-process instead of through Composio."""
 
-    declaration: types.FunctionDeclaration
+    declaration: FunctionDeclaration
     handler: LocalHandler
 
     @property
@@ -66,7 +66,7 @@ class Integration:
     key: str
     label: str
     app: str  # Composio toolkit slug
-    actions: tuple[str, ...] = ()  # curated Composio actions Gemini may call directly
+    actions: tuple[str, ...] = ()  # curated Composio actions the model may call directly
     local_tools: tuple[LocalTool, ...] = ()
     prompt: str = ""  # appended to the system prompt
     register_commands: Callable[[Bot], None] | None = None

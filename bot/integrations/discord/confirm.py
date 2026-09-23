@@ -30,6 +30,8 @@ class ConfirmView(discord.ui.View):
         self.requester_id = requester_id
         self.guild_id = guild_id
         self.channel_id = channel_id
+        self._claimed = False
+        self._expires_at = time.monotonic() + TIMEOUT_SECONDS
         self.message: discord.Message | None = None  # set by the sender so timeouts can edit it
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -42,9 +44,21 @@ class ConfirmView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
+    async def _claim(self, interaction):
+        if not await self.interaction_check(interaction):
+            return False
+        if self._claimed or time.monotonic() >= self._expires_at:
+            await interaction.response.send_message(say("confirm_expired"), ephemeral=True)
+            return False
+        # No await between checking and claiming: concurrent callbacks cannot both win.
+        self._claimed = True
+        self._disable()
+        return True
+
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self._disable()
+        if not await self._claim(interaction):
+            return
         await interaction.response.edit_message(content=say("working"), view=self)
         lines = []
         for action in self.pending:
@@ -53,9 +67,7 @@ class ConfirmView(discord.ui.View):
                 result = await action.execute()
                 ok = bool(result.get("success"))
                 if not ok:
-                    log.warning(
-                        "publish_failed integration=%s error=%s", action.integration, result.get("error")
-                    )
+                    log.warning("publish_failed integration=%s", action.integration)
             except Exception as exc:
                 log.warning("publish_failed integration=%s type=%s", action.integration, type(exc).__name__)
                 ok = False
@@ -79,12 +91,17 @@ class ConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self._disable()
+        if not await self._claim(interaction):
+            return
         await interaction.response.edit_message(content=say("cancelled"), view=self)
         self.stop()
 
     async def on_timeout(self):
+        if self._claimed:
+            return
+        self._claimed = True
         self._disable()
+        self.stop()
         if self.message is not None:
             try:
                 await self.message.edit(content=say("confirm_expired"), view=self)

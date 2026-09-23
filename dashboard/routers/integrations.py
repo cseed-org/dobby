@@ -73,6 +73,24 @@ def _connection_is_active(toolkit: str, account_id: str) -> bool:
     return any(account.id == account_id and account.status == "ACTIVE" for account in accounts.items)
 
 
+def _disconnect_accounts(toolkit: str) -> None:
+    client = _get_composio()
+    # Collect before deleting so pagination is not changed by our own writes.
+    account_ids = []
+    cursor = None
+    while True:
+        params = {"user_ids": [ENTITY_ID], "toolkit_slugs": [toolkit]}
+        if cursor:
+            params["cursor"] = cursor
+        page = client.connected_accounts.list(**params)
+        account_ids.extend(account.id for account in page.items)
+        cursor = getattr(page, "next_cursor", None)
+        if not cursor:
+            break
+    for account_id in account_ids:
+        client.connected_accounts.delete(nanoid=account_id)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -179,7 +197,8 @@ async def disconnect_integration(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    """Forget a provider connection for the service entity."""
+    """Remove the service entity's provider connections before clearing the local record."""
+    toolkit = _get_toolkit(provider)
     try:
         result = await db.execute(
             select(Integration).where(Integration.provider == provider)
@@ -190,6 +209,13 @@ async def disconnect_integration(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"No '{provider}' integration found",
             )
+        try:
+            await asyncio.to_thread(_disconnect_accounts, toolkit)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("composio_disconnect_failed provider=%s type=%s", provider, type(exc).__name__)
+            raise HTTPException(status_code=502, detail="Could not disconnect Composio account") from None
         await db.delete(integration)
         await db.commit()
     except HTTPException:

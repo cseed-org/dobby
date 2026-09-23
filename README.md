@@ -1,6 +1,6 @@
 # Dobby — Discord assistant for a student group
 
-Dobby is a Discord bot plus a small web dashboard. Mention `@Dobby` or use a slash command and it schedules Google Calendar meetings, searches and writes Notion, and drafts Instagram and LinkedIn posts for the group's accounts — always showing a preview and waiting for your **Confirm** before anything is published. Gemini does the understanding; [Composio](https://composio.dev) holds the connections to the outside services; Postgres remembers who is on the team and where to invite them. Everything runs on your own machine in Docker.
+Dobby is a Discord bot plus a small web dashboard. Mention `@Dobby` or use a slash command and it schedules Google Calendar meetings, searches and writes Notion, and drafts Instagram and LinkedIn posts for the group's accounts — always showing a preview and waiting for your **Confirm** before anything is published. Your configured AI model does the understanding; [Composio](https://composio.dev) holds the connections to the outside services; Postgres remembers who is on the team and where to invite them. Everything runs on your own machine in Docker.
 
 ## Contents
 
@@ -35,7 +35,7 @@ Design: [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/BOT_ARCHITECTURE.md](docs/B
 | --- | --- | --- |
 | `postgres` | Postgres 16: users and calendar emails, dashboard sessions, which services are connected, the audit log | — |
 | `migrate` | Runs the Alembic migrations once, then exits | — |
-| `bot` | The Discord bot (Python). Talks to Discord, Gemini, Composio and Postgres. No inbound ports | — |
+| `bot` | The Discord bot (Python). Talks to Discord, the configured AI model, Composio and Postgres. No inbound ports | — |
 | `dashboard` | FastAPI API: OAuth or local username/password login, user roster, service-account connections, audit log | 8000 |
 | `frontend` | Next.js web UI for the dashboard | 3000 |
 
@@ -49,7 +49,7 @@ Seven steps. Steps 1–5 gather credentials into `.env`, step 6 checks them, ste
 | --- | --- | --- |
 | 1 | Install Docker, get the code, create `.env` | No |
 | 2 | Create the Discord bot, fill in IDs | Yes |
-| 3 | Get a Gemini API key | Yes |
+| 3 | Configure an AI model | Yes |
 | 4 | Get a Composio API key and prepare each service | Yes |
 | 5 | Choose dashboard login: OAuth, local LAN account, or both | Yes |
 | 6 | Check the configuration | No |
@@ -95,11 +95,52 @@ TEAM_TIMEZONE=America/Los_Angeles
 CONTEXT_MESSAGE_LIMIT=50
 ```
 
-Lists accept comma-separated numeric IDs. At least one user or role must be allowed; there is no administrator bypass. Empty `ALLOWED_CHANNEL_IDS` / `MENTION_CHANNEL_IDS` permit any channel the bot can see; threads use their own IDs. Tell members that mentions send recent channel text and author display names to Gemini.
+Lists accept comma-separated numeric IDs. At least one user or role must be allowed; there is no administrator bypass. Empty `ALLOWED_CHANNEL_IDS` / `MENTION_CHANNEL_IDS` permit any channel the bot can see; threads use their own IDs. Tell members that mentions send recent channel text and author display names to the configured AI provider or local model server.
 
-### Step 3: Get a Gemini API key
+### Step 3: Configure an AI model
 
-Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY`. The default model is `gemini-3.5-flash-lite` (`GEMINI_MODEL` overrides it). Free-tier content may improve Google's products, so avoid confidential material on that tier. [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+Configure the bot's model in `.env`; provider-specific calls and fallback live in `bot/AIModels.py`.
+Set `AI_API_KEY` and `AI_MODEL`. `AI_PROVIDER=auto` recognizes `gemini-*`, `claude-*`,
+`gpt-*`, OpenAI `o1`/`o3`/`o4`, and `deepseek-*` names. Keys alone cannot reliably identify
+providers. For other model names, set `AI_PROVIDER` explicitly.
+
+| Service | `AI_PROVIDER` | Example `AI_MODEL` | `AI_BASE_URL` |
+| --- | --- | --- | --- |
+| Google Gemini | `gemini` | `gemini-2.5-flash-lite` | empty |
+| Claude | `anthropic` | `claude-sonnet-4-6` | empty |
+| GPT | `openai` | `gpt-4.1-mini` | empty |
+| DeepSeek | `deepseek` | `deepseek-chat` | empty |
+| Other compatible API | `openai-compatible` | provider's model ID | API root including `/v1` if required |
+| Local Ollama / LM Studio / vLLM | ignored when `LOCAL_MODEL=true` | installed model ID | local server's OpenAI-compatible API root |
+
+The selected model must support chat and function/tool calling to perform bot actions.
+These are examples, not a guarantee of model availability on every account. The adapters follow
+[OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat),
+[Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls),
+and [Ollama's OpenAI compatibility API](https://docs.ollama.com/api/openai-compatibility).
+
+`AI_API_KEY_BACKUP` optionally supplies a second key for the **same provider**.
+`AI_MODEL_BACKUP` optionally selects another model at the same endpoint. With only a backup
+key, Dobby retries the same model; with only a backup model, it reuses the primary key.
+Leave both empty to disable fallback. On a timeout, connection failure, HTTP 408/429/5xx,
+or HTTP 401/403 when a different backup key is available, Dobby retries generation once
+and stays on the backup for that request. Completed tools and pending confirmations are
+preserved. Each new request starts with the primary configuration. Invalid requests (400)
+and missing models (404) are reported without fallback. Keys and provider error bodies are
+never included in adapter logs.
+
+For a local server, set `LOCAL_MODEL=true`, `AI_MODEL` to the installed model ID, and
+`AI_BASE_URL` (for example `http://localhost:11434/v1` for Ollama or
+`http://localhost:1234/v1` for LM Studio). `AI_API_KEY` may be empty unless the server
+requires authentication. In Docker use `http://host.docker.internal:11434/v1` for a server
+on the host; the server must listen on an interface reachable from the container. Local
+inference does not make Discord or external integration tools offline.
+
+Existing `GEMINI_API_KEY`, `GEMINI_MODEL`, and `GEMINI_MODEL_BACKUP` settings still work
+when the corresponding generic settings are absent/empty. An explicitly empty
+`AI_MODEL_BACKUP` disables legacy model fallback. After changing `.env`, recreate the bot
+with `docker compose up -d --no-deps --force-recreate bot` (or restart a directly run bot).
+No source edits are required to switch providers.
 
 ### Step 4: Composio — the key and the services behind it
 
@@ -334,6 +375,12 @@ Docker restarts the services after a reboot unless you stopped them. Windows Doc
 
 ## Test it in Docker
 
+For the 30 system regression scenarios (full Docker startup, real Postgres,
+bot behavior, dashboard API, and Chromium browser checks), run
+`python test_regression/run.py`. See the [test catalog and GitHub check details](test_regression/README.md).
+These run on pull requests and `main`; publishing waits for both the regression
+check and the existing unit/lint checks to pass.
+
 The test suite and lint need no credentials and run with networking disabled:
 
 ```text
@@ -363,7 +410,7 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 - Confirm buttons and cooldowns live in the bot process; a restart discards pending previews.
 - Instagram publishing requires a Business/Creator account and public image URLs; stories cannot carry the share sticker; carousels cannot be re-used.
 - Composio action names are verified at startup, not at build time; a renamed action disables that capability until the list in `bot/integrations/<service>/__init__.py` is updated.
-- Gemini quotas and data terms apply. Continuous outbound internet is needed; no inbound ports beyond the dashboard's 3000/8000 on your LAN.
+- Your AI provider's quotas and data terms apply. Continuous outbound internet is needed; no inbound ports beyond the dashboard's 3000/8000 on your LAN.
 
 ## Troubleshooting
 
@@ -382,7 +429,8 @@ Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bo
 | Mention ignored | Real mention, allowed role/user, allowed channel, 10-second cooldown; `mention_access_denied` in the logs says why |
 | Replies have no context | Grant the bot Read Message History in that channel |
 | `composio_action_unknown` in the bot log | Composio renamed an action; list current names (docs/BOT_ARCHITECTURE.md) and update the integration's `ACTIONS` |
-| Tool calls fail with "no connected account" | Connect that service on the dashboard's Service accounts page; the entity must match `COMPOSIO_ENTITY_ID` |
+| `composio_auth_rejected` / `composio_schemas_failed ... status=401` or `403` | Composio rejected the project credential while loading tools, before any provider execution. Verify `COMPOSIO_API_KEY` belongs to the intended Platform project and is active. After updating `.env`, run `docker compose up -d --no-deps --force-recreate bot dashboard`; restarting does not reload environment variables. The log includes an HTTP status and request ID for support, without the credential. Startup stops on these errors instead of silently running without Calendar/Notion tools. Missing Instagram or LinkedIn connections do not block Calendar/Notion. |
+| Tool calls fail with "no connected account" | Connect that service on the dashboard's Service accounts page; the connection must be ACTIVE and its Composio User ID must match `COMPOSIO_ENTITY_ID`. This is not the project ID. Playground connections may use a generated User ID rather than `dobby`; set the existing User ID in `.env` to reuse them, then recreate bot and dashboard containers. |
 | Dashboard login says not pre-registered | An admin must add the user (Google email or Discord ID) first; OAuth bootstrap uses `BOOTSTRAP_ADMIN_EMAIL` only when no admin exists; local admins use the CLI in Step 5 |
 | Local username/password rejected | Check `AUTH_MODE=local` or `both`; reset with `docker compose exec dashboard python -m dashboard.local_admin USERNAME`. After five attempts, wait one minute. |
 | Dashboard unreachable from another computer | Use the server LAN IP in both URL variables, rebuild/recreate `frontend`, and allow TCP 3000/8000 from your local subnet. Use the same frontend origin as `DASHBOARD_URL`. |
@@ -407,4 +455,4 @@ python -m venv .venv
 cd frontend; npm install; npm run lint; npm run build
 ```
 
-On Pi/Linux use `.venv/bin/python`. Tests mock Discord, Gemini, Composio and the database; live testing needs your credentials. Dobby's phrasings live in `bot/responses/*.txt` (20 lines per file, checked by the suite). To add a service, create a folder under `bot/integrations/` — see [docs/BOT_ARCHITECTURE.md](docs/BOT_ARCHITECTURE.md#adding-or-changing-an-integration).
+On Pi/Linux use `.venv/bin/python`. Tests mock Discord, model providers, Composio and the database; live testing needs your credentials. Dobby's phrasings live in `bot/responses/*.txt` (20 lines per file, checked by the suite). To add a service, create a folder under `bot/integrations/` — see [docs/BOT_ARCHITECTURE.md](docs/BOT_ARCHITECTURE.md#adding-or-changing-an-integration).

@@ -13,3 +13,4 @@ gha-creds-*.json
 .ruff_cache
 .docker-test
 .pytest_cache
+test_regression/artifacts

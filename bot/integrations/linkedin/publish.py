@@ -1,6 +1,6 @@
 """Build LinkedIn posts as PendingActions; nothing here runs until the requester confirms."""
 
-from google.genai import types
+from bot.AIModels import FunctionDeclaration
 
 from ...composio import find_key, run_action
 from ..base import LocalTool, PendingAction, RunContext
@@ -50,7 +50,7 @@ async def draft_tool(ctx: RunContext, params: dict) -> dict:
 
 
 DRAFT_TOOL = LocalTool(
-    declaration=types.FunctionDeclaration(
+    declaration=FunctionDeclaration(
         name="draft_linkedin_post",
         description=(
             "Queue a LinkedIn post for the requester to confirm in Discord. Nothing is published "

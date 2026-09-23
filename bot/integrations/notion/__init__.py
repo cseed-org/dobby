@@ -3,7 +3,7 @@
 from ..base import Integration
 from . import commands
 
-# Curated: what Gemini may call directly. Verify names against Composio's catalog at deploy time.
+# Curated: what the model may call directly. Verify names against Composio's catalog at deploy time.
 ACTIONS = (
     "NOTION_SEARCH_NOTION_PAGE",
     "NOTION_FETCH_DATA",
