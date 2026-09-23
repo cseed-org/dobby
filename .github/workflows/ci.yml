@@ -3,26 +3,51 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  regression:
+    name: System regression tests
+    uses: ./.github/workflows/regression.yml
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'  # matches the Docker image
       - run: pip install -r requirements.txt
       - run: python scripts/check_secrets.py
       - run: ruff check bot scripts tests
       - run: ruff format --check bot scripts tests
       - run: python -m pytest -q
+      - run: pip install fastapi authlib itsdangerous aiosqlite
+      - run: python -m pytest dashboard/tests -q
+      # compose.yaml marks credentials as required (:?); placeholders let the file validate.
       - run: docker compose --env-file .env.example config --quiet
-      - run: docker compose --env-file .env.example -f compose.auth.yaml config --quiet
+        env:
+          DISCORD_TOKEN: placeholder
+          DISCORD_GUILD_ID: "1"
+          GEMINI_API_KEY: placeholder
+          COMPOSIO_API_KEY: placeholder
+          POSTGRES_PASSWORD: placeholder
+          SECRET_KEY: placeholder
+          GOOGLE_CLIENT_ID: placeholder
+          GOOGLE_CLIENT_SECRET: placeholder
+          DISCORD_CLIENT_ID: placeholder
+          DISCORD_CLIENT_SECRET: placeholder
+          BOOTSTRAP_ADMIN_EMAIL: admin@uw.edu
       - run: docker compose -f compose.test.yaml config --quiet
       - run: docker build -t calendar-bot:test .
       - run: docker run --rm --entrypoint python calendar-bot:test -c "import bot.main; import google.genai"
       # The same suite the developer runs locally, in the image it ships in.
       - run: docker compose -f compose.test.yaml run --rm tests
       - run: docker compose -f compose.test.yaml run --rm lint
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [test, regression]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish.yml

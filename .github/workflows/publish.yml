@@ -1,31 +1,14 @@
 name: Publish Docker image
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
   group: dobby-image-main
   cancel-in-progress: false
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - run: pip install -r requirements.txt
-      - run: python scripts/check_secrets.py
-      - run: ruff check bot scripts tests
-      - run: ruff format --check bot scripts tests
-      - run: python -m pytest -q
-      - run: docker compose --env-file .env.example config --quiet
-      - run: docker compose --env-file .env.example -f compose.auth.yaml config --quiet
   publish:
     if: github.ref == 'refs/heads/main'
-    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read

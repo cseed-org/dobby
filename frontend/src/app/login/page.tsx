@@ -1,11 +1,39 @@
+'use client'
+
 import Link from 'next/link'
 import { Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { API } from '@/lib/api'
+import { api, API } from '@/lib/api'
+import { useState, type FormEvent } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
-export const metadata = { title: 'Sign In | Dobby' }
 
 export default function LoginPage() {
+  const router = useRouter()
+  const { data: methods, isLoading, isError, error: methodsError } = useQuery({
+    queryKey: ['login-methods'], queryFn: api.loginMethods,
+  })
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setPending(true)
+    setError('')
+    try {
+      await api.localLogin(username, password)
+      router.push('/dashboard')
+      router.refresh()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to sign in')
+    } finally {
+      setPending(false)
+    }
+  }
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
       <div className="w-full max-w-sm">
@@ -17,13 +45,37 @@ export default function LoginPage() {
           <div className="text-center">
             <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Dobby Dashboard</h1>
             <p className="mt-1.5 text-sm text-zinc-400">
-              UW student group portal &mdash; pre-registration required.
+              Team portal &mdash; pre-registration required.
             </p>
           </div>
         </div>
 
-        {/* Auth buttons */}
-        <div className="flex flex-col gap-3">
+        {isLoading && <p role="status" className="text-sm text-zinc-400">Loading sign-in options...</p>}
+        {/* Show what the API actually said — "Local network access only" and a CORS
+            failure are the same symptom here, and only the detail tells them apart. */}
+        {isError && (
+          <p role="alert" className="text-sm text-red-400">
+            Cannot reach the dashboard API
+            {methodsError instanceof Error && methodsError.message ? ` — ${methodsError.message}` : ''}.
+            {' '}Check the server address and connection, then reload.
+          </p>
+        )}
+        {methods?.local && (
+          <form onSubmit={login} className="mb-6 flex flex-col gap-3">
+            <h2 className="text-lg font-medium text-zinc-100">Local account</h2>
+            <Label htmlFor="username">Username</Label>
+            <Input id="username" autoComplete="username" required maxLength={64}
+              value={username} onChange={(event) => setUsername(event.target.value)} />
+            <Label htmlFor="password">Password</Label>
+            <Input id="password" type="password" autoComplete="current-password" required maxLength={256}
+              value={password} onChange={(event) => setPassword(event.target.value)} />
+            {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+            <Button type="submit" disabled={pending}>{pending ? 'Signing in...' : 'Sign in'}</Button>
+            <p className="text-xs text-zinc-500">Use an account created by your server administrator. Local network access required.</p>
+          </form>
+        )}
+        {methods?.oauth && (
+          <div className="flex flex-col gap-3">
           <Button
             asChild
             size="lg"
@@ -31,7 +83,7 @@ export default function LoginPage() {
           >
             <Link href={`${API}/auth/google`}>
               <GoogleIcon />
-              Sign in with Google (UW)
+              Sign in with Google
             </Link>
           </Button>
 
@@ -46,10 +98,11 @@ export default function LoginPage() {
               Sign in with Discord
             </Link>
           </Button>
-        </div>
+          </div>
+        )}
 
         <p className="mt-6 text-center text-xs text-zinc-500">
-          Access is restricted to pre-registered UW students and approved members.
+          Access is restricted to pre-registered members.
         </p>
       </div>
     </main>

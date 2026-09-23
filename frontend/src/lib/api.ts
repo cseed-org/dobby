@@ -1,4 +1,4 @@
-import type { User, Integration, GuildSettings, AuditEntry, Contact } from './types'
+import type { User, Integration, AuditEntry, Paginated } from './types'
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -12,13 +12,27 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({}))
     throw new Error((err as { detail?: string }).detail ?? `Request failed: ${res.status}`)
   }
+  if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
 
+export interface UserEdit {
+  display_name?: string
+  discord_id?: string | null
+  calendar_email?: string | null
+}
+
 export const api = {
+  loginMethods: () => request<{ local: boolean; oauth: boolean }>('/auth/methods'),
+  localLogin: (username: string, password: string) => request<{ ok: boolean }>('/auth/local', {
+    method: 'POST', body: JSON.stringify({ username, password }),
+  }),
   me: () => request<User>('/me'),
+  updateMe: (data: { calendar_email: string | null }) =>
+    request<User>('/me', { method: 'PATCH', body: JSON.stringify(data) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
 
+  // Dobby's service accounts — admin only.
   integrations: {
     list: () => request<Integration[]>('/integrations'),
     connectUrl: (provider: string) => `${API}/integrations/${provider}/connect`,
@@ -27,17 +41,19 @@ export const api = {
 
   admin: {
     users: {
-      list: () => request<User[]>('/admin/users'),
-      create: (data: { uw_email: string; discord_id?: string; display_name: string; role: string }) =>
-        request<User>('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+      list: () => request<Paginated<User>>('/admin/users?limit=200').then((page) => page.items),
+      create: (data: {
+        uw_email: string
+        discord_id?: string
+        display_name: string
+        calendar_email?: string
+        role: string
+      }) => request<User>('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: string, data: UserEdit) =>
+        request<User>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
       remove: (id: string) => request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
       setRole: (id: string, role: string) =>
         request<User>(`/admin/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
-    },
-    settings: {
-      get: (guildId: string) => request<GuildSettings>(`/admin/settings/${guildId}`),
-      update: (guildId: string, data: Partial<GuildSettings>) =>
-        request<GuildSettings>(`/admin/settings/${guildId}`, { method: 'PUT', body: JSON.stringify(data) }),
     },
     audit: (params?: { limit?: number; offset?: number; tool?: string; status?: string }) => {
       const q = new URLSearchParams(
@@ -45,9 +61,8 @@ export const api = {
           Object.entries(params ?? {}).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])
         )
       ).toString()
-      return request<AuditEntry[]>(`/admin/audit${q ? '?' + q : ''}`)
+      return request<Paginated<AuditEntry>>(`/admin/audit${q ? '?' + q : ''}`).then((page) => page.items)
     },
-    contacts: (guildId: string) => request<Contact[]>(`/admin/contacts/${guildId}`),
   },
 }
 
