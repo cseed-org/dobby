@@ -5,6 +5,7 @@ the audit trail records which tool ran, not what it was asked or answered.
 """
 
 from difflib import SequenceMatcher
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,10 +61,43 @@ async def find_user_by_name(session: AsyncSession, name: str) -> dict | None:
 async def set_calendar_email(session: AsyncSession, discord_id: str, email: str | None) -> int:
     """Set or clear a user's calendar email. Returns rows changed: 0 means not registered."""
     result = await session.execute(
-        sa.text("UPDATE users SET calendar_email = :e WHERE discord_id = :d"),
+        sa.text(
+            "UPDATE users SET calendar_email = :e, calendar_email_updated_at = CURRENT_TIMESTAMP WHERE discord_id = :d"
+        ),
         {"e": email, "d": str(discord_id)},
     )
     return result.rowcount
+
+
+async def save_calendar_email(
+    session: AsyncSession,
+    discord_id: str,
+    email: str,
+    display_name: str,
+    *,
+    observed_at=None,
+    replace_name=True,
+) -> bool:
+    """Self-registration, keyed only by the authenticated Discord author. Never alter roles/login fields."""
+    result = await session.execute(
+        sa.text(
+            "INSERT INTO users (discord_id, display_name, calendar_email, calendar_email_updated_at) "
+            "VALUES (:d, :n, :e, :at) "
+            "ON CONFLICT (discord_id) DO UPDATE SET calendar_email = :e, "
+            "display_name = CASE WHEN :rename THEN :n ELSE users.display_name END, "
+            "calendar_email_updated_at = :at WHERE users.calendar_email_updated_at IS NULL "
+            "OR users.calendar_email_updated_at < :at OR :manual"
+        ),
+        {
+            "d": str(discord_id),
+            "n": display_name,
+            "e": email,
+            "at": observed_at or datetime.now(timezone.utc),
+            "manual": observed_at is None,
+            "rename": replace_name,
+        },
+    )
+    return bool(result.rowcount)
 
 
 async def record_action(

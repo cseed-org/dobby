@@ -6,6 +6,10 @@ service lives in its own folder under `bot/integrations/` and declares what the 
 Nothing conversational is stored: each request reads recent channel messages live, and only
 tool-call metadata is recorded (to `agent_actions`). Anything published to the outside world
 (Instagram, LinkedIn) is previewed in Discord and waits for the requester to press **Confirm**.
+Calendar writes use the meeting proposal and 🟢 / 🔴 reaction flow restored from `b79b732`
+(the parent of Avi Agola's `4182a50` reconstruction).
+Missing invitee emails do not block that proposal or event creation. Confirmation also approves
+the specific deferred invitations listed in the preview.
 
 The dashboard (`dashboard/`) and frontend (`frontend/`) are documented separately. The bot talks
 to them only through the shared Postgres database and the shared Composio entity. Dashboard `AUTH_MODE` (`oauth`, `local`, `both`) does not change Discord bot allowlists or Composio service authorization. Local usernames/password hashes belong to the dashboard; the bot does not authenticate with them. A local admin needs a registered Discord ID to use bot features that look up the user roster. See [dashboard login setup](../README.md#step-5-dashboard-login).
@@ -50,13 +54,31 @@ unknown names with a warning), adds the local tools, and joins the prompts.
 
 | Folder | Composio actions the model calls directly | Local tools | Commands | Confirm-gated? |
 | --- | --- | --- | --- | --- |
-| `google_calendar` | create / find / update / delete event, find free slots | `lookup_calendar_email` (users table) | `/schedule`, `/events` | no |
+| `google_calendar` | find event, find free slots | `lookup_calendar_email`; schema-preserving create / patch / delete proposal handlers | `/schedule`, `/events` | **yes**, 🟢 / 🔴 |
 | `notion` | search, fetch, create page, add content | — | `/notion search`, `/notion note` | no |
 | `instagram` | none | `list_instagram_posts`, `draft_instagram_post`, `draft_instagram_story` | `/instagram posts`, `post`, `story` | **yes** |
 | `linkedin` | none | `draft_linkedin_post` | `/linkedin post` | **yes** |
 
 Publishing integrations expose no direct Composio actions: the model can only *draft*, and the Graph
 API / LinkedIn calls run inside `PendingAction.execute()` after Confirm.
+
+Calendar schemas still come from Composio, but `build_registry()` installs local handlers for
+all three calendar write tools. `google_calendar/proposals.py` reads the existing event for
+edits/deletions, freezes the write arguments, and queues the original bold-labelled preview:
+Title, When (with UTC offset), Location, Description, Invitees, and actual Changes for edits.
+Updates use `GOOGLECALENDAR_PATCH_EVENT` so omitted fields are preserved. The adapter reads
+with `GOOGLECALENDAR_EVENTS_GET` again before applying an edit/deletion and rejects a changed
+snapshot. This is a best-effort stale-preview check, not an atomic conditional write.
+Only single timed meetings are supported. Additional write options are included in the preview.
+
+`discord/calendar_confirm.py` presents these proposals for both `/schedule` and mentions,
+using the original response pools under `calendar_*`. It adds 🟢 to confirm and 🔴 to cancel,
+accepts only the requester's reaction, rechecks access, and expires after two minutes. A
+proposal is claimed before awaiting anything, preventing duplicate reaction writes. Long
+previews are split in full and reactions go on the last message. Missing reaction permission
+leaves no executable proposal; the bot needs Add Reactions and Read Message History in the
+channel. Manage Messages is optional (used to clear spent reactions). Pending proposals are
+in memory and do not survive a restart. No live calendar mutations are needed to run tests.
 
 ## Request lifecycle
 
@@ -94,14 +116,49 @@ flowchart TD
    `published` / `publish_failed`; Cancel or a 2-minute timeout discards them. Other users' clicks
    are refused. Commands that publish directly (`/linkedin post`, `/instagram post|story`) skip the
    agent and call `bot.confirm(interaction, pending)` with the same view.
+   If the pending batch includes a calendar action, the whole batch instead uses the reaction
+   gate described above. Execution outcomes are audited separately from proposal preparation.
 
 ## Persistence, state and memory
+
+### Email capture and deferred invitations
+
+Authorized members can register their own calendar address without being pre-added by an admin:
+`/email action:set email:me@example.com`, or `@Dobby my name is Leonard and my email is me@example.com`.
+An explicit self-email declaration in an enabled channel also works without a mention. A direct
+reply to Dobby's email prompt may contain just the address or `Leonard: me@example.com`.
+These deterministic parsers save only the actual Discord author's row; they do not let the model
+assign someone else's identity or modify roles and login credentials. `/email show` remains masked
+and `/email remove` clears the address. All existing guild/channel/user/role checks still apply.
+
+`google_calendar/tools.py` records missing lookups in the request. Calendar write schemas add a
+local-only `deferred_invitees` list, stripped before Composio execution. Each entry includes a name
+and, when known, a Discord ID. The preview asks for those addresses while proceeding with known
+guests. Only a successful, confirmed event write creates durable `calendar_invites` rows tied to
+the actual returned event ID. Cancelled/unconfirmed proposals never authorize a later invitation.
+
+After an email save, a successful confirmed write with missing invitees, or a later agent request,
+`google_calendar/invitations.py` retries waiting invitations. It rechecks the original requester's
+access, resolves an exact Discord ID or an unambiguous exact/first name (never fuzzy), fetches the
+current guest list, and patches it to add the missing address with notifications enabled. Existing
+guest addresses are retained. PostgreSQL transaction advisory locks serialize Dobby's updates to
+the same event; completed rows and existing-attendee checks suppress duplicates. Failed attempts
+remain pending for the next trigger. Finished/cancelled events are not invited to. There is no
+background polling loop; a later email save or request retries provider failures.
+
+Before an agent request, `discord/emails.py` can recover explicit self-email declarations and
+prompt replies from the same `CONTEXT_MESSAGE_LIMIT` human-message window in the current channel.
+It respects `ALLOWED_CHANNEL_IDS` and `MENTION_CHANNEL_IDS`, and never stores chat text. Message
+timestamps prevent older context from overwriting a newer address or undoing `/email remove`.
+Apply migration **004** before running this bot version; it adds `calendar_invites` and
+`users.calendar_email_updated_at`. Pending invitations survive restarts; unconfirmed previews do not.
 
 All durable state lives in Postgres (Alembic migrations in `migrations/versions/`):
 
 | Table | Bot usage |
 | --- | --- |
 | `users` | Read by `discord_id` (mentions, `/email show`) and by `display_name` (`lookup_calendar_email`); `/email set` and `remove` update `calendar_email` for the caller's own row |
+| `calendar_invites` | Confirmed event IDs, requested people, original requester/channel, and pending/completed/expired status; no message content |
 | `agent_actions` | Written: one row per tool call or publish, metadata only (`discord_id`, resolved `user_id`, tool name, `ok`/`error`, duration). Arguments and results are never stored |
 
 `sessions` and `integrations` belong to the dashboard. Configuration is environment-only. There is

@@ -50,6 +50,7 @@ def make_bot(config=None):
         bot = Bot(cfg)
     bot.agent = AsyncMock()
     bot.agent.run = AsyncMock(return_value=AgentResult("Done."))
+    bot.reconcile_calendar_invites = AsyncMock(return_value=0)
     bot._connection = Mock()
     bot._connection.user = Mock(id=5)
     return bot
@@ -67,6 +68,12 @@ def make_message(bot, content="<@5> schedule a meeting"):
     msg.author = Mock(bot=False, id=1)
     msg.guild = Mock(id=10)
     msg.channel = Mock(id=40)
+
+    async def empty_history(**kwargs):
+        if False:
+            yield None
+
+    msg.channel.history = empty_history
     msg.mentions = [bot.user]
     msg.content = content
     msg.reply = AsyncMock()

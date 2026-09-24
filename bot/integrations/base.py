@@ -33,6 +33,7 @@ class RunContext:
     toolset: object = None  # Composio client, for tools that build PendingActions
     config: object = None  # bot Config (entity id, Instagram account id, ...)
     pending: list[PendingAction] = field(default_factory=list)
+    missing_invitees: dict[str, dict] = field(default_factory=dict)
 
     def queue(self, action: PendingAction) -> dict:
         """Park an action for confirmation and tell the model what happened."""

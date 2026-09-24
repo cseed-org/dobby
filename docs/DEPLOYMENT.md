@@ -120,10 +120,19 @@ docker compose logs --tail 50 -f bot
 
 ## Publish images from GitHub
 
-`.github/workflows/publish.yml` runs on main pushes. It tests the source, validates Compose, then builds and publishes AMD64 and ARM64 **bot** images to:
+`.github/workflows/ci.yml` runs on pull requests, main pushes, and manual dispatch.
+Only a successful main run calls `.github/workflows/publish.yml`, after both the
+unit/lint/Docker checks and the full system regression suite pass. It publishes
+AMD64 and ARM64 **bot** images to:
 
 - `ghcr.io/owner/repository:main`
+- `ghcr.io/owner/repository:latest`
 - `ghcr.io/owner/repository:sha-COMMIT_SHA`
+
+Each publish creates a `github-packages` deployment record with a package link.
+The job summary lists the tested commit, tags, image digest, and pull command.
+Failed checks and pull requests never publish. This deployment records a package
+release, not a rollout to your machine; pull/recreate it or use the Pi timer below.
 
 The workflow uses GitHub's built-in `GITHUB_TOKEN`; no cloud key or application secret is required. After the first publish, change the package's visibility to **Public** so the Pi can pull without credentials. Protect `main` and workflow changes: a trusted image can read runtime credentials. The dashboard and frontend are built locally from the checkout.
 

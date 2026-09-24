@@ -83,7 +83,9 @@ class Agent:
             system += "\n" + self.registry.prompt
         if known_people:
             system += "\nMentioned people:\n" + "\n".join(
-                f"- {p['display_name']} — {p['calendar_email'] or 'no email on file'}" for p in known_people
+                f"- {p['display_name']} — {p['calendar_email'] or 'no email on file'} "
+                f"(Discord ID: {p.get('discord_id', 'unknown')})"
+                for p in known_people
             )
         tool_calls_made = 0
         start = time.monotonic()

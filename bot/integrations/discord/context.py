@@ -59,5 +59,5 @@ async def resolve_mentions(session: AsyncSession, text: str) -> tuple[str, list[
         user = found.get(match.group(1))
         return f"@{user['display_name']}" if user else match.group(0)
 
-    people = [user for user in found.values() if user]
+    people = [{**user, "discord_id": discord_id} for discord_id, user in found.items() if user]
     return MENTION.sub(replace, text), people

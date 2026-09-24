@@ -29,7 +29,7 @@ jobs:
         env:
           DISCORD_TOKEN: placeholder
           DISCORD_GUILD_ID: "1"
-          GEMINI_API_KEY: placeholder
+          AI_API_KEY: placeholder
           COMPOSIO_API_KEY: placeholder
           POSTGRES_PASSWORD: placeholder
           SECRET_KEY: placeholder
@@ -50,4 +50,5 @@ jobs:
     permissions:
       contents: read
       packages: write
+      deployments: write
     uses: ./.github/workflows/publish.yml

@@ -12,7 +12,10 @@ from ...voice import say
 from .. import INTEGRATIONS, build_registry
 from . import commands as general_commands
 from .confirm import ConfirmView, preview_text
+from .calendar_confirm import present_calendar
 from .context import gather_context, resolve_mentions
+from .emails import capture_email, recover_recent_emails
+from ..google_calendar.invitations import reconcile_invites
 
 log = logging.getLogger("scheduler")
 
@@ -23,6 +26,7 @@ class Bot(discord.Client):
         intents.guilds = True
         # Message content intent needed for mention-based requests.
         intents.guild_messages = True
+        intents.guild_reactions = True
         intents.message_content = True
         super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none(), max_messages=None)
         self.config = config
@@ -32,6 +36,7 @@ class Bot(discord.Client):
         self.agent = Agent(config, build_registry(self.toolset, integrations))
         self.agent.toolset = self.toolset
         self.cooldowns = {}
+        self.calendar_confirmations = {}
         self.register_commands()
 
     # ------------------------------------------------------------------ access
@@ -106,6 +111,8 @@ class Bot(discord.Client):
             or not self.config.mentionable(message.channel.id)
         ):
             return
+        if await capture_email(self, message):
+            return
         if self.user not in message.mentions:
             return
         if not await self.member_allowed(message.author.id, message.channel.id):
@@ -136,6 +143,8 @@ class Bot(discord.Client):
 
     async def ask_agent(self, request, guild_id, channel, user_id, before=None) -> AgentResult:
         """Gather live channel context and mentioned people, then run the agent once."""
+        await recover_recent_emails(self, channel, before=before)
+        await self.reconcile_calendar_invites()
         context = await gather_context(channel, limit=self.config.context_limit, before=before)
         async with SessionLocal() as session:
             request, people = await resolve_mentions(session, request)
@@ -155,6 +164,9 @@ class Bot(discord.Client):
         `target` is the placeholder `discord.Message` (mentions) or the `discord.Interaction`
         (slash commands) to edit.
         """
+        if any(action.integration == "google_calendar" for action in result.pending):
+            await present_calendar(self, target, result.pending, requester_id)
+            return
         content = result.text.strip()
         view = None
         if result.pending:
@@ -179,6 +191,29 @@ class Bot(discord.Client):
         await self.send_result(interaction, AgentResult(text, [pending]), interaction.user.id)
 
     # ------------------------------------------------------------------ lifecycle
+
+    async def reconcile_calendar_invites(self):
+        try:
+            return await reconcile_invites(self)
+        except Exception as exc:
+            log.warning("invite_reconciliation_failed type=%s", type(exc).__name__)
+            return 0
+
+    async def on_raw_reaction_add(self, payload):
+        entry = self.calendar_confirmations.get(payload.message_id)
+        if entry is not None and (self.user is None or payload.user_id != self.user.id):
+            try:
+                await entry.react(payload)
+            except Exception as exc:
+                log.warning("calendar_confirmation_failed type=%s", type(exc).__name__)
+                await entry.finish(say("generic_failure"))
+
+    async def close(self):
+        for entry in self.calendar_confirmations.values():
+            if entry.task:
+                entry.task.cancel()
+        self.calendar_confirmations.clear()
+        await super().close()
 
     def register_commands(self):
         @self.tree.error

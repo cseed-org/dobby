@@ -25,6 +25,13 @@ FIELDS = {
 
 # Used when a file is missing or has no usable line. Must format with the same FIELDS.
 FALLBACK = {
+    "calendar_cancelled": "Dobby has cancelled the request. No calendar change made, Dobby promises.",
+    "calendar_deleted": "Dobby has deleted the meeting, as you asked.",
+    "calendar_updated": "Dobby has updated the meeting! Everything is in its proper place now.",
+    "calendar_created": "Dobby has created the meeting! Happy to help, Dobby is.",
+    "calendar_confirm_instructions": "React with 🟢 to confirm or 🔴 to cancel. Dobby is waiting.",
+    "calendar_preview_outro": "Dobby will wait for your confirmation before changing anything. Confirm within 2 minutes. Times include their UTC offset.",
+    "calendar_preview_intro": "Dobby has prepared a meeting proposal! Please check the details, if you please.",
     "working": "Dobby is on it! Dobby will reply here shortly…",
     "cooldown": "One moment, if you please! Dobby needs 10 seconds between requests.",
     "not_authorized": "Dobby is sorry, but you are not authorized to use this calendar here.",

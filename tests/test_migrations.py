@@ -65,3 +65,6 @@ def test_offline_generates_all_migrations(monkeypatch):
     assert "ADD COLUMN local_username" in sql
     assert "ADD COLUMN password_hash" in sql
     assert "uq_users_local_username" in sql
+    assert "CREATE TABLE calendar_invites" in sql
+    assert "uq_calendar_invite_target" in sql
+    assert "ADD COLUMN calendar_email_updated_at" in sql

@@ -57,6 +57,8 @@ async def test_07_migration_image_preserves_supported_data(previous):
         assert row["role"] == "admin" and row["calendar_email"] == "calendar@example.org"
         assert row["uw_email"] == "existing@example.org" and row["discord_id"] == "42"
         assert row["local_username"] is None
+        assert row["calendar_email_updated_at"] is not None
+        assert await connection.fetchval("SELECT to_regclass('calendar_invites')") is not None
         assert await connection.fetchval("SELECT count(*) FROM sessions WHERE token='old-token'") == 1
         if previous == "002":
             assert (

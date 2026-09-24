@@ -30,10 +30,9 @@ def test_lookup_tool_returns_match_or_not_found():
         with patch(
             "bot.integrations.google_calendar.tools.find_user_by_name", new=AsyncMock(return_value=None)
         ):
-            assert await LOOKUP_TOOL.handler(ctx, {"name": "Nobody"}) == {
-                "success": True,
-                "found": False,
-                "name": "Nobody",
-            }
+            result = await LOOKUP_TOOL.handler(ctx, {"name": "Nobody"})
+            assert result["success"] and not result["found"]
+            assert "prepare the event now" in result["note"]
+            assert ctx.missing_invitees["nobody"] == {"name": "Nobody", "discord_id": None}
 
     asyncio.run(run())

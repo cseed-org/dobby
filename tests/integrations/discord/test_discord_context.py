@@ -87,7 +87,7 @@ def test_resolve_mentions_replaces_known_ids_and_collects_people():
         with patch(f"{MOD}.find_user_by_discord_id", new=AsyncMock(side_effect=lookup)) as find:
             text, people = await resolve_mentions(None, "invite <@1> and <@!1> and <@2>")
             assert text == "invite @Maya Chen and @Maya Chen and <@2>"
-            assert people == [maya]
+            assert people == [{**maya, "discord_id": "1"}]
             assert find.await_count == 2
 
     asyncio.run(run())

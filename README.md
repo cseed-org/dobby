@@ -394,6 +394,12 @@ Then validate `.env` without contacting Discord (step 6). Run it before the firs
 
 Pushes to `main` run the checks and publish `linux/amd64` and `linux/arm64` **bot** images to GitHub Container Registry using the built-in `GITHUB_TOKEN`. Make the package public for unauthenticated pulls. The optional Pi timer pulls and recreates the `bot` service when its image changes; see [automatic updates](docs/DEPLOYMENT.md#automatic-updates-on-the-pi). The dashboard and frontend images are built locally from the checkout.
 
+Publishing waits for the unit, dashboard, lint, secret-scan, Docker and system regression checks.
+Successful runs publish `ghcr.io/cseed-org/dobby:main`, `:latest`, and `:sha-COMMIT_SHA`,
+and record a `github-packages` deployment in GitHub. The publish job summary includes
+the image digest and pull command. Pull requests run the checks but do not publish.
+The deployment records package publication; it does not restart anyone's running bot.
+
 ## Secrets and access
 
 - Credentials belong in local `.env`, which Git and Docker builds ignore. Only `.env.example` is tracked. Compose passes values to containers as environment variables; nothing is baked into images.

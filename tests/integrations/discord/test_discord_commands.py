@@ -14,6 +14,7 @@ def make_interaction(user_id=1):
     interaction = Mock()
     interaction.guild_id = 10
     interaction.user.id = user_id
+    interaction.user.display_name = "Maya"
     interaction.user.roles = []
     interaction.channel_id = 40
     interaction.response.send_message = AsyncMock()
@@ -33,11 +34,12 @@ def test_email_set_saves_a_normalized_address():
         interaction = make_interaction()
         with (
             patch(f"{MOD}.SessionLocal") as mock_sl,
-            patch(f"{MOD}.set_calendar_email", new=AsyncMock(return_value=1)) as setter,
+            patch(f"{MOD}.save_calendar_email", new=AsyncMock(return_value=True)) as setter,
+            patch(f"{MOD}.find_user_by_discord_id", new=AsyncMock(return_value=None)),
         ):
             mock_sl.return_value = fake_session_local()
             await run_email(bot, interaction, "set", " <Maya@UW.edu> ")
-        assert setter.await_args.args[1:] == ("1", "maya@uw.edu")
+        assert setter.await_args.args[1:] == ("1", "maya@uw.edu", "Maya")
         text = interaction.response.send_message.await_args.args[0]
         assert "saved" in text.lower()
         assert interaction.response.send_message.await_args.kwargs["ephemeral"] is True
@@ -45,12 +47,13 @@ def test_email_set_saves_a_normalized_address():
     asyncio.run(run())
 
 
-def test_email_set_rejects_invalid_and_unregistered():
+def test_email_set_rejects_invalid_and_registers_new_people():
     async def run():
         bot = make_bot()
         with (
             patch(f"{MOD}.SessionLocal") as mock_sl,
-            patch(f"{MOD}.set_calendar_email", new=AsyncMock(return_value=0)) as setter,
+            patch(f"{MOD}.save_calendar_email", new=AsyncMock(return_value=True)) as setter,
+            patch(f"{MOD}.find_user_by_discord_id", new=AsyncMock(return_value=None)),
         ):
             mock_sl.return_value = fake_session_local()
             interaction = make_interaction()
@@ -60,7 +63,8 @@ def test_email_set_rejects_invalid_and_unregistered():
 
             interaction = make_interaction()
             await run_email(bot, interaction, "set", "maya@uw.edu")
-            assert "roster" in interaction.response.send_message.await_args.args[0]
+            assert "saved" in interaction.response.send_message.await_args.args[0]
+            setter.assert_awaited_once()
 
     asyncio.run(run())
 
