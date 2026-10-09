@@ -111,6 +111,7 @@ providers. For other model names, set `AI_PROVIDER` explicitly.
 | GPT | `openai` | `gpt-4.1-mini` | empty |
 | DeepSeek | `deepseek` | `deepseek-chat` | empty |
 | Other compatible API | `openai-compatible` | provider's model ID | API root including `/v1` if required |
+| Modal-hosted model | `openai-compatible` | served model, e.g. `Qwen/Qwen3-8B` | endpoint URL (a trailing `/chat/completions` is fine); `AI_API_KEY` = `<proxy token id>.<proxy token secret>` |
 | Local Ollama / LM Studio / vLLM | ignored when `LOCAL_MODEL=true` | installed model ID | local server's OpenAI-compatible API root |
 
 The selected model must support chat and function/tool calling to perform bot actions.
@@ -118,6 +119,11 @@ These are examples, not a guarantee of model availability on every account. The 
 [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat),
 [Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls),
 and [Ollama's OpenAI compatibility API](https://docs.ollama.com/api/openai-compatibility).
+
+Optional tuning: `AI_MAX_TOKENS` (default 8192; reasoning models spend part of it before replying,
+and a cut-off reply logs `model_reply_truncated`), `AI_REASONING_EFFORT` (OpenAI-compatible
+providers only; adds latency) and `MAX_TOOL_CALLS` (default 40, the agent loop's only backstop
+against a model that keeps calling tools).
 
 `AI_API_KEY_BACKUP` optionally supplies a second key for the **same provider**.
 `AI_MODEL_BACKUP` optionally selects another model at the same endpoint. With only a backup
@@ -314,7 +320,7 @@ Teammate: let's do the launch checklist next Tuesday at 2pm
 You: @Dobby make this a meeting
 ```
 
-Meetings default to one hour in `TEAM_TIMEZONE`. Dobby matches a typed name against registered users' display names (exact, then first name, then a close match) and resolves `@mentions` directly; if someone has no calendar email on file it says so rather than guessing. `/events days:30` lists upcoming events.
+Meetings default to one hour in `TEAM_TIMEZONE`. Dobby matches a typed name against registered users' full or first names and resolves `@mentions` directly. If a name fits more than one person Dobby asks which; a near miss is only ever a suggestion, never an invitation. The preview shows each invitee as `Name (email)` so you can check who was picked. If someone has no calendar email yet, the meeting is still scheduled, and when they add one Dobby posts the address it found and asks you to approve inviting them. Nothing is added to a guest list without your 🟢. `/events days:30` lists upcoming events.
 
 ### Notion
 
@@ -446,6 +452,7 @@ The deployment records package publication; it does not restart anyone's running
 | Frontend calls the wrong API host | `API_URL` is baked at build time: `docker compose build frontend && docker compose up -d frontend` |
 | Instagram commands say `INSTAGRAM_USER_ID is not set` | Set it in `.env` and recreate the bot |
 | Instagram/LinkedIn publish fails | Check the connection in Composio (scopes, token expiry) and the audit log on the dashboard |
+| `model_error` in the bot log, or replies end mid-sentence | Check `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL`; `model_reply_truncated` means raise `AI_MAX_TOKENS` |
 | Registry pull denied | Make the package public and use a lowercase `DOBBY_IMAGE` |
 
 ## Development
@@ -462,3 +469,13 @@ cd frontend; npm install; npm run lint; npm run build
 ```
 
 On Pi/Linux use `.venv/bin/python`. Tests mock Discord, model providers, Composio and the database; live testing needs your credentials. Dobby's phrasings live in `bot/responses/*.txt` (20 lines per file, checked by the suite). To add a service, create a folder under `bot/integrations/` — see [docs/BOT_ARCHITECTURE.md](docs/BOT_ARCHITECTURE.md#adding-or-changing-an-integration).
+
+`make help` lists the test harness ([docs/TESTING.md](docs/TESTING.md), [docs/EVALS.md](docs/EVALS.md)); the main entry points:
+
+```bash
+make check              # lint + bot and dashboard suites + postgres integration + live Composio schema check
+make test-integration   # tests/integration against a throwaway docker postgres (migrations, schema drift)
+make test-composio      # live: every curated Composio action still resolves (needs COMPOSIO_API_KEY)
+make eval               # behavioral evals: live model decides, tool execution stubbed; report in evals/
+make chat / chat-fake   # REPL through the real agent pipeline (live model, or scripted with no keys)
+```

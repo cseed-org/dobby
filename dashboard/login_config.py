@@ -34,12 +34,20 @@ def local_networks() -> tuple:
     return _parse_networks(os.environ.get("LOCAL_NETWORKS", ""))
 
 
+def local_mode() -> bool:
+    # strip() because .env files are often CRLF; "true\r" must still count.
+    return os.environ.get("LOCAL_MODE", "").strip().lower() in ("1", "true", "yes")
+
+
 def dashboard_urls() -> list[str]:
     """Origins browsers may load the dashboard from, without trailing slashes.
 
     Comma-separated so one deployment can serve a LAN address and a Tailscale address at
     once; the first entry is the canonical origin that post-login redirects land on.
+    LOCAL_MODE pins it to localhost so a server's DASHBOARD_URL can stay in .env.
     """
+    if local_mode():
+        return ["http://localhost:3000"]
     raw = os.environ.get("DASHBOARD_URL", "") or "http://localhost:3000"
     urls = [url.strip().rstrip("/") for url in raw.split(",") if url.strip()]
     return urls or ["http://localhost:3000"]

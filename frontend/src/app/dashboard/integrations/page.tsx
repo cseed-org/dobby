@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Calendar, BookOpen, Instagram, Linkedin } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -14,6 +15,11 @@ interface ProviderConfig {
   label: string
   description: string
   icon: React.ReactNode
+}
+
+interface Notice {
+  kind: 'success' | 'error'
+  text: string
 }
 
 const PROVIDERS: ProviderConfig[] = [
@@ -43,6 +49,32 @@ const PROVIDERS: ProviderConfig[] = [
     icon: <Linkedin className="h-6 w-6 text-sky-400" />,
   },
 ]
+
+const LABELS = new Map(PROVIDERS.map((p) => [p.key, p.label]))
+
+// Only known provider keys render, so a crafted ?error= link can't inject text.
+function readCallbackNotice(): Notice | null {
+  const params = new URLSearchParams(window.location.search)
+  const connected = LABELS.get(params.get('connected') ?? '')
+  const failed = LABELS.get(params.get('error') ?? '')
+  if (connected) return { kind: 'success', text: `${connected} connected.` }
+  if (failed) {
+    return { kind: 'error', text: `${failed} didn't connect. The sign-in was cancelled or failed — try again.` }
+  }
+  return null
+}
+
+function NoticeBanner({ notice }: { notice: Notice }) {
+  const tone =
+    notice.kind === 'success'
+      ? 'border-emerald-800 bg-emerald-950 text-emerald-300'
+      : 'border-red-800 bg-red-950 text-red-300'
+  return (
+    <div role="status" className={`rounded-md border px-4 py-3 text-sm ${tone}`}>
+      {notice.text}
+    </div>
+  )
+}
 
 function IntegrationCard({
   provider,
@@ -105,11 +137,20 @@ function IntegrationCard({
 
 export default function IntegrationsPage() {
   const queryClient = useQueryClient()
+  const [notice, setNotice] = useState<Notice | null>(null)
+
+  useEffect(() => {
+    const fromCallback = readCallbackNotice()
+    if (fromCallback) {
+      setNotice(fromCallback)
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [])
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.me })
   const isAdmin = me?.role === 'admin'
 
-  const { data: integrations, isLoading } = useQuery({
+  const { data: integrations, isLoading, isError } = useQuery({
     queryKey: ['integrations'],
     queryFn: api.integrations.list,
     enabled: isAdmin,
@@ -117,8 +158,20 @@ export default function IntegrationsPage() {
 
   const disconnectMutation = useMutation({
     mutationFn: (provider: string) => api.integrations.disconnect(provider),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['integrations'] }),
+    onSuccess: (_, provider) =>
+      setNotice({ kind: 'success', text: `${LABELS.get(provider)} disconnected. Dobby no longer has access.` }),
+    onError: (err, provider) =>
+      setNotice({ kind: 'error', text: `Couldn't disconnect ${LABELS.get(provider)}: ${err.message}` }),
+    // Refetch either way: a partial failure can still have removed some connections.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['integrations'] }),
   })
+
+  function handleDisconnect(key: string) {
+    const label = LABELS.get(key)
+    if (window.confirm(`Disconnect ${label} for everyone? Dobby loses access until an admin reconnects it.`)) {
+      disconnectMutation.mutate(key)
+    }
+  }
 
   const integrationMap = new Map<string, Integration>(
     integrations?.map((i) => [i.provider, i]) ?? []
@@ -134,6 +187,8 @@ export default function IntegrationsPage() {
         </p>
       </div>
 
+      {notice && <NoticeBanner notice={notice} />}
+
       {me && !isAdmin ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-zinc-400">
@@ -146,6 +201,9 @@ export default function IntegrationsPage() {
             <Skeleton key={i} className="h-48" />
           ))}
         </div>
+      ) : isError ? (
+        // Not "Disconnected" cards: an admin would reconnect live connections and create duplicates.
+        <NoticeBanner notice={{ kind: 'error', text: "Couldn't load Dobby's service accounts. Refresh to try again." }} />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {PROVIDERS.map((provider) => (
@@ -153,7 +211,7 @@ export default function IntegrationsPage() {
               key={provider.key}
               provider={provider}
               integration={integrationMap.get(provider.key)}
-              onDisconnect={(key) => disconnectMutation.mutate(key)}
+              onDisconnect={handleDisconnect}
               isDisconnecting={
                 disconnectMutation.isPending && disconnectMutation.variables === provider.key
               }

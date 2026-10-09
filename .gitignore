@@ -17,6 +17,7 @@ gha-creds-*.json
 .ruff_cache/
 .docker-test/
 frontend/node_modules/
+/evals/
 frontend/.next/
 frontend/next-env.d.ts
 frontend/tsconfig.tsbuildinfo

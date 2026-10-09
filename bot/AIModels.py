@@ -121,6 +121,9 @@ class Endpoint:
 class ModelSettings:
     primary: Endpoint
     backup: Endpoint | None = None
+    # Reasoning models spend part of this on hidden reasoning before the visible reply.
+    max_tokens: int = 8192
+    reasoning_effort: str = ""
 
     @classmethod
     def from_env(cls):
@@ -140,6 +143,13 @@ class ModelSettings:
         if not key and provider == "gemini":
             key = os.getenv("GEMINI_API_KEY", "").strip()
         primary = cls._endpoint(provider, model, key, os.getenv("AI_BASE_URL", "").strip())
+        try:
+            max_tokens = int(os.getenv("AI_MAX_TOKENS", "8192"))
+        except ValueError:
+            max_tokens = 0
+        if not 256 <= max_tokens <= 131072:
+            raise ConfigError("AI_MAX_TOKENS must be a whole number from 256 to 131072.")
+        tuning = {"max_tokens": max_tokens, "reasoning_effort": os.getenv("AI_REASONING_EFFORT", "").strip()}
         backup_key = os.getenv("AI_API_KEY_BACKUP", "").strip()
         legacy = (
             not any(os.getenv(k, "").strip() for k in ("AI_MODEL", "AI_API_KEY")) and provider == "gemini"
@@ -147,17 +157,19 @@ class ModelSettings:
         default_backup = os.getenv("GEMINI_MODEL_BACKUP", "gemini-3.1-flash-lite") if legacy else ""
         backup_model = os.getenv("AI_MODEL_BACKUP", default_backup).strip()
         if not backup_model and not backup_key:
-            return cls(primary)
+            return cls(primary, **tuning)
         backup_model = backup_model or model
         # Backups deliberately use the same provider/endpoint; keys never cross providers.
         backup = cls._endpoint(provider, backup_model, backup_key or key, primary.base_url)
-        return cls(primary, backup if backup != primary else None)
+        return cls(primary, backup if backup != primary else None, **tuning)
 
     @staticmethod
     def _endpoint(provider, model, key, base_url):
         if not key and provider != "local":
             raise ConfigError("Missing configuration: AI_API_KEY (or GEMINI_API_KEY for Gemini).")
         base_url = base_url or BASE_URLS.get(provider, "")
+        if provider not in ("gemini", "anthropic"):
+            base_url = base_url.rstrip("/").removesuffix("/chat/completions")
         if provider != "gemini":
             parsed = urlparse(base_url)
             if (
@@ -235,7 +247,7 @@ class AIModels:
         try:
             if endpoint.provider == "gemini":
                 return await self._generate_gemini(endpoint, contents, system, tools)
-            payload = self._payload(endpoint, contents, system, tools)
+            payload = self._payload(endpoint, contents, system, tools, self.settings)
             headers = {}
             if endpoint.provider == "anthropic":
                 path = "/messages"
@@ -302,7 +314,7 @@ class AIModels:
                 system_instruction=system,
                 tools=[google_types.Tool(function_declarations=declarations)] if declarations else None,
                 temperature=0,
-                max_output_tokens=4096,
+                max_output_tokens=self.settings.max_tokens,
             ),
         )
         candidate = response.candidates[0] if response.candidates else None
@@ -319,7 +331,8 @@ class AIModels:
         return Content("model", parts, native, "gemini")
 
     @staticmethod
-    def _payload(endpoint, contents, system, tools):
+    def _payload(endpoint, contents, system, tools, settings=None):
+        settings = settings or ModelSettings(endpoint)
         anthropic = endpoint.provider == "anthropic"
         messages = [] if anthropic else [{"role": "system", "content": system}]
         for content in contents:
@@ -377,7 +390,11 @@ class AIModels:
                         )
         payload = {"model": endpoint.model, "messages": messages}
         # Omitting temperature also supports reasoning models that reject temperature=0.
-        payload["max_completion_tokens" if endpoint.provider == "openai" else "max_tokens"] = 4096
+        payload["max_completion_tokens" if endpoint.provider == "openai" else "max_tokens"] = (
+            settings.max_tokens
+        )
+        if settings.reasoning_effort and not anthropic:
+            payload["reasoning_effort"] = settings.reasoning_effort
         if anthropic:
             payload["system"] = system
         declarations = [d for tool in tools for d in tool.function_declarations]
@@ -415,6 +432,8 @@ class AIModels:
         else:
             if not data["choices"]:
                 return Content("model", [])
+            if data["choices"][0].get("finish_reason") == "length":
+                log.warning("model_reply_truncated provider=%s", provider)
             message = data["choices"][0]["message"]
             if not isinstance(message, dict):
                 raise ValueError("Invalid assistant message")

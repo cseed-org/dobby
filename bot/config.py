@@ -32,6 +32,8 @@ class Config:
     notion_parent_page_id: str = ""
     model_backup: str = "gemini-3.1-flash-lite"
     ai_settings: ModelSettings | None = None
+    # The agent loop's only backstop against a model that keeps calling tools.
+    max_tool_calls: int = 40
 
     @classmethod
     def load(cls):
@@ -63,6 +65,12 @@ class Config:
             context_limit = -1
         if not 0 <= context_limit <= 500:
             raise ConfigError("CONTEXT_MESSAGE_LIMIT must be a whole number from 0 to 500.")
+        try:
+            max_tool_calls = int(os.getenv("MAX_TOOL_CALLS", "40"))
+        except ValueError:
+            max_tool_calls = 0
+        if not 1 <= max_tool_calls <= 500:
+            raise ConfigError("MAX_TOOL_CALLS must be a whole number from 1 to 500.")
         ai_settings = ModelSettings.from_env()
         return cls(
             os.environ["DISCORD_TOKEN"],
@@ -81,6 +89,7 @@ class Config:
             os.getenv("NOTION_PARENT_PAGE_ID", "").strip(),
             ai_settings.backup.model if ai_settings.backup else "",
             ai_settings,
+            max_tool_calls,
         )
 
     def mentionable(self, channel):

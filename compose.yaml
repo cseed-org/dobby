@@ -65,6 +65,9 @@ services:
       AI_MODEL_BACKUP:
       LOCAL_MODEL: ${LOCAL_MODEL:-false}
       AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-8192}
+      AI_REASONING_EFFORT: ${AI_REASONING_EFFORT:-}
+      MAX_TOOL_CALLS: ${MAX_TOOL_CALLS:-40}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:?}
       # Tools returning file attachments write a cache; the root filesystem is read-only.
@@ -110,6 +113,7 @@ services:
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:?}
       COMPOSIO_ENTITY_ID: ${COMPOSIO_ENTITY_ID:-dobby}
       DASHBOARD_URL: ${DASHBOARD_URL:-http://localhost:3000}
+      LOCAL_MODE: ${LOCAL_MODE:-false}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
     depends_on:
       migrate:
@@ -126,6 +130,7 @@ services:
       args:
         # Baked into the browser bundle; rebuild this service after changing API_URL.
         NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8000}
+        LOCAL_MODE: ${LOCAL_MODE:-false}
     image: dobby-frontend:local
     pull_policy: never
     restart: unless-stopped

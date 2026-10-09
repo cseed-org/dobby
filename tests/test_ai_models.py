@@ -362,7 +362,7 @@ def test_parallel_tool_batch_cannot_exceed_agent_limit(monkeypatch):
     registry = ToolRegistry([Tool([declaration])], local={"draft": LocalTool(declaration, handler)})
 
     async def run():
-        config = SimpleNamespace(ai_settings=models().settings, timezone="UTC")
+        config = SimpleNamespace(ai_settings=models().settings, timezone="UTC", max_tool_calls=8)
         with patch("bot.agent.record_action", new=AsyncMock()):
             result = await Agent(config, registry).run(AsyncMock(), "draft", "1", "2", "3")
         assert "smaller" in result.text
@@ -407,3 +407,49 @@ def test_model_only_backup_does_not_retry_invalid_credentials(monkeypatch):
 
     asyncio.run(run())
     assert len(calls) == 1
+
+
+def test_modal_style_full_chat_completions_url_is_accepted():
+    cfg = settings(
+        AI_PROVIDER="openai-compatible",
+        AI_MODEL="Qwen/Qwen3-8B",
+        AI_API_KEY="token-id.token-secret",
+        AI_BASE_URL="https://example.modal.direct/v1/chat/completions",
+    )
+    assert cfg.primary.base_url == "https://example.modal.direct/v1"
+
+
+def test_token_budget_and_reasoning_effort_reach_the_request():
+    cfg = settings(
+        AI_PROVIDER="openai-compatible",
+        AI_MODEL="custom",
+        AI_API_KEY="test",
+        AI_BASE_URL="https://example.test/v1",
+        AI_MAX_TOKENS="16000",
+        AI_REASONING_EFFORT="high",
+    )
+    payload = AIModels._payload(cfg.primary, [], "system", [], cfg)
+    assert payload["max_tokens"] == 16000
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_defaults_omit_reasoning_effort_and_never_send_it_to_anthropic():
+    default = settings(AI_MODEL="gpt-test", AI_API_KEY="test")
+    assert default.max_tokens == 8192
+    assert "reasoning_effort" not in AIModels._payload(default.primary, [], "s", [], default)
+    claude = settings(AI_MODEL="claude-test", AI_API_KEY="test", AI_REASONING_EFFORT="high")
+    assert "reasoning_effort" not in AIModels._payload(claude.primary, [], "s", [], claude)
+
+
+@pytest.mark.parametrize("value", ["100", "999999", "lots"])
+def test_invalid_token_budget_fails_at_startup(value):
+    with pytest.raises(ConfigError):
+        settings(AI_MODEL="gpt-test", AI_API_KEY="test", AI_MAX_TOKENS=value)
+
+
+def test_reply_cut_off_at_token_limit_is_logged(caplog):
+    data = {"choices": [{"finish_reason": "length", "message": {"role": "assistant", "content": "cut"}}]}
+    with caplog.at_level("WARNING", logger="ai_models"):
+        content = AIModels._parse("openai-compatible", data)
+    assert content.parts[0].text == "cut"
+    assert "model_reply_truncated" in caplog.text
