@@ -21,6 +21,7 @@ Dobby is a Discord bot plus a small web dashboard. Mention `@Dobby` or use a sla
 - **Google Calendar:** create, move, rename and delete meetings on the team calendar by talking to it. Invite people by name or `@mention`; each registered user's calendar email comes from the dashboard, so invitees never link anything.
 - **Notion:** search the workspace and create pages.
 - **Instagram and LinkedIn:** post to the group's accounts, or put one of our Instagram posts on our story. Every publish shows a preview with Confirm/Cancel that only the requester can press.
+- **Instagram DMs in Discord (optional):** each incoming DM opens a thread in a channel you choose, so a teammate can answer without opening Instagram. The reply is previewed, sent after Confirm, and the thread closes.
 - **Context, not memory:** every request reads the last 50 human messages in the channel (`CONTEXT_MESSAGE_LIMIT`), live from Discord, so "make this a meeting" works. Nothing conversational is stored — not the messages, not tool arguments, not results. The audit log keeps only *who ran which tool, when, and whether it worked*.
 - **One set of service accounts:** Dobby acts through connections an admin makes once on the dashboard (one Composio entity, `COMPOSIO_ENTITY_ID`). Nobody connects personal accounts.
 - Server, role/user and channel allowlists; a 10-second per-user cooldown; Docker restart policy, bounded logs, optional automatic Pi updates.
@@ -159,7 +160,7 @@ Composio is where the service connections live. You create the API key now; the 
 | --- | --- | --- |
 | **Google Calendar** | Managed app works. For your own: a Google Cloud OAuth client with the Calendar API enabled and the `calendar.events` scope. Use a dedicated Google account that owns the team calendar; Dobby writes to that account's calendar. | — |
 | **Notion** | Managed app works. After connecting, share the pages/databases Dobby may see with the integration inside Notion. | `NOTION_PARENT_PAGE_ID` (optional: where `/notion note` creates pages; copy the 32-hex ID from the page URL) |
-| **Instagram** | Needs your own Meta app: a Facebook Page linked to an Instagram **Business or Creator** account, the Instagram Graph API product, and the `instagram_basic` + `instagram_content_publish` permissions. Paste the app ID/secret into Composio's Instagram auth config. | `INSTAGRAM_USER_ID` — the IG user ID (from the Graph API Explorer or Meta Business settings). Required for anything Instagram |
+| **Instagram** | Needs your own Meta app: a Facebook Page linked to an Instagram **Business or Creator** account, the Instagram Graph API product, and the `instagram_basic` + `instagram_content_publish` permissions (add `instagram_manage_messages` for the DM relay). Paste the app ID/secret into Composio's Instagram auth config. | `INSTAGRAM_USER_ID` — the IG user ID (from the Graph API Explorer or Meta Business settings). Required for anything Instagram. Optional: `INSTAGRAM_DM_CHANNEL_ID`, `INSTAGRAM_DM_POLL_SECONDS` (see [Instagram DMs](#instagram-dms)) |
 | **LinkedIn** | Needs your own LinkedIn app with the **Share on LinkedIn** product, giving the `w_member_social` scope (plus `openid profile` for the author lookup). Paste its client ID/secret into Composio's LinkedIn auth config. | — |
 
 Composio's own callback URL (shown in each auth config) goes into the Google / Meta / LinkedIn app as the authorized redirect URI — not Dobby's URL.
@@ -302,6 +303,7 @@ Then, in a browser:
 1. Open `DASHBOARD_URL` (default <http://localhost:3000>) and sign in with your local admin username/password or a pre-registered OAuth admin account, depending on `AUTH_MODE`.
 2. **Users:** add teammates — display name, Google email, their Discord user ID (so `@mentions` and `/email` work) and their calendar email. Anyone can later change their own calendar email on the dashboard home page or with `/email` in Discord.
 3. **Service accounts** (admin only): press **Connect** for Google Calendar, Notion, Instagram and LinkedIn. Each opens Composio's OAuth flow for that service under the `dobby` entity; approve it with the group's account and you land back on the page with a **Connected** badge.
+   **Luma** is connected differently: its card signs in to Luma's own MCP server (`mcp.luma.com`). Use the Luma account that manages the group's calendar. No API key or Luma Plus is needed. Luma fetches Dobby's OAuth client document from `API_URL/integrations/luma/client.json`, so `API_URL` must be a public HTTPS address. If it isn't (a LAN-only install), copy that JSON to any public HTTPS host and set `LUMA_CLIENT_ID` to its URL.
 4. In Discord, try `/help`, then `/events` — Dobby lists the connected calendar's upcoming events.
 
 Run **one bot instance per Discord token**. Stop the Windows copy with `docker compose down` before starting a Pi copy.
@@ -338,6 +340,28 @@ Meetings default to one hour in `TEAM_TIMEZONE`. Dobby matches a typed name agai
 
 Every one of these shows the exact text/image first with **Confirm** and **Cancel** buttons. Only the requester can press them, they expire after two minutes, and nothing is published until Confirm. Images must be public `https` URLs. A story "featuring" a post re-publishes that post's photo or video; Instagram's API cannot attach the tappable share sticker, and carousel posts cannot be reused.
 
+### Luma
+
+Ask in plain words: "what Luma events do we have next month?", "who's registered for Demo Night?", "invite sam@example.com to Demo Night". `/luma events` and `/luma guests event:…` are shortcuts. Dobby uses whatever Luma's MCP server offers. Reads are answered directly; anything that changes Luma (creating or editing events, inviting, approving or declining guests, blasts) shows the exact request with Confirm/Cancel first. Luma's MCP server cannot cancel events or issue refunds; do those on luma.com.
+
+### Instagram DMs
+
+Set `INSTAGRAM_DM_CHANNEL_ID` to a Discord channel ID (and `INSTAGRAM_USER_ID`), make sure the Meta app has `instagram_manage_messages`, reconnect Instagram in the dashboard if you added that permission, and recreate the bot. Every `INSTAGRAM_DM_POLL_SECONDS` (default 60, 15–3600) Dobby checks the account's recent conversations. For a new message it posts a short notice in that channel and opens a thread under it named after the sender, or reuses the conversation's thread while it is still open, and quotes the sender and text there. Messages sent from our own account are not relayed.
+
+In the thread:
+
+```text
+/dm reply text:Yes! Send us the details and we'll share it.   → preview, then Confirm sends it
+@Dobby tell them thanks and that we'll repost it, and put post 2 on our story
+/dm close                                                      → close the thread without replying
+```
+
+The reply goes to Instagram exactly as previewed, only after the requester presses **Confirm** (requester-only, two minutes, same as publishing). Once it is sent, Dobby closes and archives the thread; Cancel leaves it open. A later message in the same conversation opens a fresh thread. Mentions in the thread can also use the other Instagram tools, for example putting one of our posts on our story (behind its own Confirm).
+
+Access works as elsewhere: the server, user/role allowlists and `ALLOWED_CHANNEL_IDS` / `MENTION_CHANNEL_IDS` are checked against the DM channel (the thread's parent), so add it to those lists if you set them. Dobby needs Send Messages, Create Public Threads, Send Messages in Threads and Read Message History in that channel; it archives only threads it created.
+
+When the relay first starts, it does not post the existing inbox: conversations it has never seen are relayed only from the moment the bot started. After that it keeps a cursor per conversation, so messages that arrive while Dobby is offline are relayed when it comes back (up to 10 per conversation). Postgres stores only the conversation ID, the sender's Instagram-scoped ID (needed to reply), the Discord thread ID, open/closed and the newest message ID and time (`instagram_dm_threads`, migration 006). Message text is never stored; it exists in Instagram and in the Discord thread.
+
 ### Your calendar email
 
 `/email action:set email:you@uw.edu`, `/email action:show` (masked), `/email action:remove` — or edit it on the dashboard home page. You must be on the dashboard's user list with your Discord ID for `/email` to work.
@@ -351,10 +375,11 @@ Every one of these shows the exact text/image first with **Confirm** and **Cance
 | `/notion search query:…` / `/notion note title:… content:…` | Find Notion pages or create one |
 | `/linkedin post text:…` | Preview a LinkedIn post; Confirm publishes it |
 | `/instagram posts` / `post` / `story` | List our posts; post a photo; put a post or image on our story — all previewed, then Confirm |
+| `/dm reply text:…` / `/dm close` | Inside an Instagram DM thread: preview a reply (Confirm sends it and closes the thread), or close it without replying |
 | `/email action:set|show|remove` | Your own calendar email |
 | `/help` | Every service's examples and privacy information |
 
-Replies and previews are visible to everyone in the channel. Dobby never sends DMs.
+Replies and previews are visible to everyone in the channel. Dobby never sends Discord DMs.
 
 ## Everyday Docker commands
 
@@ -410,6 +435,7 @@ The deployment records package publication; it does not restart anyone's running
 
 - Credentials belong in local `.env`, which Git and Docker builds ignore. Only `.env.example` is tracked. Compose passes values to containers as environment variables; nothing is baked into images.
 - Service tokens (Google, Notion, Meta, LinkedIn) live in **Composio**, under your Composio account, not on this machine. Rotating `COMPOSIO_API_KEY` or disconnecting a service in Composio cuts Dobby off immediately.
+- **Luma is the exception:** it isn't on Composio, so Dobby's Luma OAuth tokens are stored in Postgres (`luma_connection`), and the bot refreshes them. Disconnecting Luma on the dashboard revokes them at Luma and deletes the row. You can also revoke Dobby's access from Luma's account settings.
 - The Postgres volume (`pgdata`) holds teammates' emails and dashboard sessions; treat database backups like `.env`. No message content is ever stored.
 - On Pi keep `.env` at mode `600`, owned by the configured UID/GID. On Windows restrict the folder to your account. Compose secrets are not encrypted at rest; host root and Docker administrators can read them.
 - Anyone with the allowed role can act on all connected services *through Dobby's accounts*: create calendar events, write Notion pages, and — after their own Confirm — publish to the group's Instagram and LinkedIn. Restrict who gets the role.
@@ -421,6 +447,8 @@ The deployment records package publication; it does not restart anyone's running
 - One bot instance, one Discord server, one Composio entity (one account per service).
 - Confirm buttons and cooldowns live in the bot process; a restart discards pending previews.
 - Instagram publishing requires a Business/Creator account and public image URLs; stories cannot carry the share sticker; carousels cannot be re-used.
+- The Instagram DM relay polls (no webhooks: Dobby publishes no inbound ports), so a DM shows up within `INSTAGRAM_DM_POLL_SECONDS`. It relays text only (attachments, stickers and reactions show as a placeholder) and replies with text. Instagram only lets a business reply within 24 hours of the person's last message; later replies fail and are reported as such.
+- LinkedIn messages cannot be relayed: LinkedIn's API does not expose member or page messaging, and Composio's LinkedIn toolkit has no messaging actions. Email relaying is not built yet.
 - Composio action names are verified at startup, not at build time; a renamed action disables that capability until the list in `bot/integrations/<service>/__init__.py` is updated.
 - Your AI provider's quotas and data terms apply. Continuous outbound internet is needed; no inbound ports beyond the dashboard's 3000/8000 on your LAN.
 
@@ -451,6 +479,8 @@ The deployment records package publication; it does not restart anyone's running
 | Connect button returns to Composio's page, no "Connected" badge | The Composio redirect points at the API's `/integrations/<provider>/callback`; `API_URL` must be reachable from the browser |
 | Frontend calls the wrong API host | `API_URL` is baked at build time: `docker compose build frontend && docker compose up -d frontend` |
 | Instagram commands say `INSTAGRAM_USER_ID is not set` | Set it in `.env` and recreate the bot |
+| No threads for Instagram DMs | `INSTAGRAM_DM_CHANNEL_ID` and `INSTAGRAM_USER_ID` set and the bot recreated; the Meta app has `instagram_manage_messages` and Instagram was reconnected after adding it; bot logs show `instagram_dm_relay_started`, and `instagram_dm_list_failed` explains Composio errors. Conversations Dobby has never seen are relayed only from the moment the bot started |
+| `/dm reply` says the thread is closed | Someone already answered or closed it; the next message from that person opens a new thread |
 | Instagram/LinkedIn publish fails | Check the connection in Composio (scopes, token expiry) and the audit log on the dashboard |
 | `model_error` in the bot log, or replies end mid-sentence | Check `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL`; `model_reply_truncated` means raise `AI_MAX_TOKENS` |
 | Registry pull denied | Make the package public and use a lowercase `DOBBY_IMAGE` |

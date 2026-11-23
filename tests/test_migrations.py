@@ -70,3 +70,7 @@ def test_offline_generates_all_migrations(monkeypatch):
     assert "ADD COLUMN calendar_email_updated_at" in sql
     assert "ADD COLUMN proposed_at" in sql
     assert "ADD COLUMN attempts" in sql
+    assert "CREATE TABLE instagram_dm_threads" in sql
+    assert "uq_instagram_dm_conversation" in sql
+    assert "CREATE TABLE luma_connection" in sql
+    assert "ck_luma_connection_single_row" in sql
